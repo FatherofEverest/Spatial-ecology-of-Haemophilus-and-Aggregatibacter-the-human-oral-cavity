@@ -1,0 +1,1 @@
+Pangenome for de-replicated set of Haemophilus and Aggregatibacter genomes (n = 202) based on 98% ANI threshold
