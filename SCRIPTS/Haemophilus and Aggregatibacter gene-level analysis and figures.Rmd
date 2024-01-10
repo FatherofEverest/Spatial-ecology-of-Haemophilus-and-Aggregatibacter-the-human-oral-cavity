@@ -1,0 +1,472 @@
+---
+title: "Haemophilus and Aggregatibacter gene-level analysis and figures"
+author: "J. J. Giacomini"
+date: "2023-05-04"
+output: html_document
+---
+
+
+
+Need to export all of the gene calls from the contigs data base. Run on MBL barhal-01 server.
+
+AVAILABLE GENE CALLERS
+* 'prodigal' (387,934 gene calls)
+* 'Transfer_RNAs' (9,992 gene calls)
+* 'Ribosomal_RNA_23S' (445 gene calls)
+* 'Ribosomal_RNA_16S' (407 gene calls)
+
+```{bash}
+
+WD=/workspace/jmarkwelchlab/P_0622_Haemophilus_Aggregatibacter
+CONTIGS_DB=$WD/04_CONTIGS_DB/P_0622_Haemophilus_Aggregatibacter-contigs.db
+
+# get list of gene callers
+anvi-export-gene-calls -c $CONTIGS_DB --list-gene-callers -o $WD/04_CONTIGS_DB/gene-calls-txt
+ 
+# export gene calls
+anvi-export-gene-calls -c $CONTIGS_DB --gene-caller Transfer_RNAs -o $WD/04_CONTIGS_DB/Transfer_RNAs-gene-calls-txt #done 
+anvi-export-gene-calls -c $CONTIGS_DB --gene-caller Ribosomal_RNA_23S -o $WD/04_CONTIGS_DB/Ribosomal_RNA_23S-gene-calls-txt # done
+anvi-export-gene-calls -c $CONTIGS_DB --gene-caller Ribosomal_RNA_16S -o $WD/04_CONTIGS_DB/Ribosomal_RNA_16S-gene-calls-txt # done
+anvi-export-gene-calls -c $CONTIGS_DB --gene-caller prodigal -o $WD/04_CONTIGS_DB/prodigal-gene-calls-txt # done
+
+
+
+```
+
+
+The purpose of this file is to generate gene-level detection radial plots for focal genomes using a subset of metagenomes (top 30 ranked by median coverage) for three oral sites where site-specialization was observed (SUPP, TD and BM). We will need files that were made in the main analysis file, including:
+
+
+1. P_0622_Haemophilus_Aggregatibacter-PAN.db
+2. P_0622_Haemophilus_Aggregatibacter-GENOMES.db
+3. GENOME-gene_detection.txt-COMBO-30 (where GENOME is something like A_sp_HMT_458_str_W10330_id_GCA_000466335_1)
+
+The GENOME-gene_detection.txt-COMBO-30 file was made using the indivMetaCombiner_DETECTION.py script.
+
+
+
+# Gene-level detection radial plots for top 30 metagenomes ranked by median coverage for three oral sites where species demonstrated site-specialization (SUPP, TD, KG)
+
+We need the latest version of the pangenome on my local machine
+```{bash}
+
+# send pan.db and genomes.db
+genomeDB=jgiacomini@evol5.mbl.edu:/workspace/jmarkwelchlab/P_0622_Haemophilus_Aggregatibacter/09_PANGENOME/internal_annotated_P_0622_Haemophilus_Aggregatibacter/P_0622_Haemophilus_Aggregatibacter-GENOMES.db
+panDB=jgiacomini@evol5.mbl.edu:/workspace/jmarkwelchlab/P_0622_Haemophilus_Aggregatibacter/09_PANGENOME/internal_annotated_P_0622_Haemophilus_Aggregatibacter/P_0622_Haemophilus_Aggregatibacter-RESULTS/P_0622_Haemophilus_Aggregatibacter-PAN.db
+
+scp -r $genomeDB /Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/P_0622_Haemophilus_Aggregatibacter-GENOMES.db
+scp -r $panDB /Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/P_0622_Haemophilus_Aggregatibacter-PAN.db
+
+
+# send detection files
+
+scp -r jgiacomini@evol5.mbl.edu:/workspace/jmarkwelchlab/P_0622_Haemophilus_Aggregatibacter/23_GENE_LEVEL_DETECTION/A_sp_HMT_458_str_W10330_id_GCA_000466335_1-gene_detection.txt-COMBO-30 /Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/07_GENE_LEVEL/A_sp_HMT_458_str_W10330_id_GCA_000466335_1-gene_detection.txt-COMBO-30
+
+scp -r jgiacomini@evol5.mbl.edu:/workspace/jmarkwelchlab/P_0622_Haemophilus_Aggregatibacter/23_GENE_LEVEL_DETECTION/H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1-gene_detection.txt-COMBO-30 /Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/07_GENE_LEVEL/H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1-gene_detection.txt-COMBO-30
+
+scp -r jgiacomini@evol5.mbl.edu:/workspace/jmarkwelchlab/P_0622_Haemophilus_Aggregatibacter/23_GENE_LEVEL_DETECTION/H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1-gene_detection.txt-COMBO-30 /Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/07_GENE_LEVEL/H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1-gene_detection.txt-COMBO-30
+```
+
+Summarise gene coverages for gene-caller_ids and gene clusters for each genome. This will produce a single txt file
+```{bash}
+PAN_DIR=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME
+GENOMES=P_0622_Haemophilus_Aggregatibacter-GENOMES.db
+PAN=P_0622_Haemophilus_Aggregatibacter-PAN.db
+
+# migrate to version 15
+anvi-migrate $PAN_DIR/$PAN --migrate-dbs-safely
+
+# summary of gene coverage for gene-caller_ids and gene clusters for each genome
+anvi-summarize -g $PAN_DIR/$GENOMES -p $PAN_DIR/$PAN --init-gene-coverages  -o $PAN_DIR/SUMMARY -C cas3 
+```
+
+Subset the pangenome summary file. We don't need things like aa sequences
+```{bash}
+cut -f 1-5 $PAN_DIR/SUMMARY/P_0622_Haemophilus_Aggregatibacter_gene_clusters_summary.txt > $PAN_DIR/SUMMARY/P_0622_Haemophilus_Aggregatibacter_gene_clusters_summary_subset.txt
+```
+
+
+Generate gene-cluster bins for each species group. We need a file called /Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/H_parainfluenzae_collection_list.txt that contains a list of the genomes in each group. For H. parainfluenzae and for A. sp. HMT-458. Need GenomeID column header.
+
+```{r make group files}
+
+
+H_parainfluenzae <- data.frame(Genome_ID  = c("H_parainfluenzae_str_C2004002727_id_GCA_003252885_1",
+                     "H_parainfluenzae_str_C2005004058_id_GCA_003252915_1",
+                     "H_parainfluenzae_str_C2004002729_id_GCA_003252795_1",
+                     "H_parainfluenzae_str_60884_B_Hi_2_id_GCA_001949895_1",
+                     "H_parainfluenzae_str_UMB0748_id_GCA_002884755_1",
+                     "H_parainfluenzae_str_ATCC_9796_id_GCA_001680775_1",
+                     "H_parainfluenzae_str_C2006002596_id_GCA_003252755_1",
+                     "H_parainfluenzae_str_65114_B_Hi_3_id_GCA_001949885_1",
+                     "H_parainfluenzae_str_Haemophilus_parainfluenzae_BgEED17_id_GCA_901873375_1",
+                     "H_parainfluenzae_str_209_HPAR_id_GCA_001055885_1",
+                     "H_parainfluenzae_str_C2004000280_id_GCA_003252725_1",
+                     "H_parainfluenzae_str_CCUG_58848_id_GCA_001679405_1",
+                     "H_parainfluenzae_str_M1C111_2_id_GCA_014982385_1",
+                     "H_parainfluenzae_str_432_HPAR_id_GCA_001055095_1",
+                     "H_parainfluenzae_str_146_HPAR_id_GCA_001053575_1",
+                     "H_parainfluenzae_str_M1C116_1_id_GCA_014982375_1",
+                     "H_parainfluenzae_str_C2008001710_id_GCA_003252775_1",
+                     "H_parainfluenzae_str_LC_1315_18_id_GCA_008868695_1",
+                     "H_parainfluenzae_str_488_HPAR_id_GCA_001057005_1",
+                     "H_parainfluenzae_str_137_HINF_id_GCA_001053535_1",
+                     "H_parainfluenzae_str_1128_HPAR_id_GCA_001053915_1",
+                     "H_parainfluenzae_str_155_HPAR_id_GCA_001054475_1",
+                     "H_parainfluenzae_str_1209_HPAR_id_GCA_001053035_1",
+                     "H_parainfluenzae_str_901_HPAR_id_GCA_001059815_1",
+                     "H_parainfluenzae_str_COPD_014_E1_O_id_GCA_009914785_1",
+                     "H_parainfluenzae_str_NCTC10672_id_GCA_900450995_1",
+                     "H_parainfluenzae_str_M1C137_2_id_GCA_014931395_1",
+                     "H_parainfluenzae_str_M27794_id_GCA_003390455_1",
+                     "H_parainfluenzae_str_NCTC10665_id_GCA_900638025_1",
+                     "H_parainfluenzae_str_M1C152_1_id_GCA_014931295_1",
+                     "H_parainfluenzae_str_M1C160_1_id_GCA_014931275_1",
+                     "H_parainfluenzae_str_M1C149_1_id_GCA_014931315_1",
+                     "H_parainfluenzae_str_M1C120_2_id_GCA_014931455_1",
+                     "H_parainfluenzae_str_M1C130_2_id_GCA_014931415_1",
+                     "H_parainfluenzae_str_M1C125_4_id_GCA_014931435_1",
+                     "H_parainfluenzae_str_M1C146_1_id_GCA_014931355_1",
+                     "H_parainfluenzae_str_M1C113_1_id_GCA_014931475_1",
+                     "H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1",
+                     "H_parainfluenzae_str_M1C147_1_id_GCA_014931335_1",
+                     "H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1",
+                     "H_parainfluenzae_str_HK262_id_GCA_000259485_1",
+                     "H_parainfluenzae_str_T3T1_id_GCA_000210895_1",
+                     "H_sp_str_HMSC073C03_id_GCA_001814055_1",
+                     "H_sp_str_HMSC61B11_id_GCA_001838615_1",
+                     "H_sp_str_HMSC068C11_id_GCA_001815355_1",
+                     "H_sp_str_HMSC061E01_id_GCA_001810345_1",
+                     "H_sp_str_HMSC066D03_id_GCA_001811025_1",
+                     "H_sp_str_CCUG_60358_id_GCA_001679485_1",
+                     "H_sp_str_HMSC71H05_id_GCA_001838635_1",
+                     "H_influenzae_str_841_HINF_id_GCA_001058575_1",
+                     "H_influenzae_str_159_HINF_id_GCA_001055565_1"))
+write.table(H_parainfluenzae, "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/H_parainfluenzae_collection_list.txt", row.names = FALSE, quote = FALSE)
+
+
+A_sp_HMT_458 <- data.frame(Genome_ID  = c("A_sp_HMT_458_str_W10330_id_GCA_000466335_1",
+                 "A_sp_str_2125159857_id_GCA_017798005_1"))
+write.table(A_sp_HMT_458, "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/A_sp_HMT_458_collection_list.txt", row.names = FALSE, quote = FALSE)
+```
+
+
+```{r create functions}
+
+library(janitor)
+library(dplyr)
+
+species_group_gene_cluster_binning <- function(group) {
+  # load data
+  pan_summary_df <- read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/SUMMARY/P_0622_Haemophilus_Aggregatibacter_gene_clusters_summary_subset.txt", header = TRUE, sep = "\t", fill = TRUE)
+  pan_summary_df$genome_name <- as.factor(pan_summary_df$genome_name)
+  group_df = read.table(paste0("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/",group,"_collection_list.txt"), header = TRUE, sep = "\t")
+  
+  # count number of rows in group collection list
+  n_group = nrow(group_df)
+  
+  # filter data by genome group
+  df1 <- pan_summary_df %>% 
+    filter(genome_name %in% group_df$Genome_ID) %>% 
+    droplevels()
+  df1$gene_callers_id <- as.factor(df1$gene_callers_id)
+  df1$gene_cluster_id <- as.factor(df1$gene_cluster_id)
+  
+  # Create wide df that tallys the count of gene-cluster_ID for each genome
+  df2 <- df1 %>%
+    # count number of rows for each combination of genome_name and gene_cluster_id
+    group_by(genome_name, gene_cluster_id) %>%
+    tally() %>%
+    # pivot the protocol names over the columns
+    pivot_wider(names_from=gene_cluster_id, values_from=n) %>%
+    # replace NA values in all columns with 0
+    mutate(across(everything(), .fns=~replace_na(., 0)))
+  
+  # remove first column
+  df4<-df2[,-1]
+  
+  # convert matrix to binary
+  df5 <- as.matrix((df4>0)+0)
+  
+  # convert matrix to data frame
+  df5 <- as.data.frame(df5)
+  
+  # add back first column
+  df5 <- cbind(df2$genome_name, df5)
+  
+  df6 <-df5 %>% 
+    rename(genome_name = 'df2$genome_name')
+  
+  # Add new row that is the sum of each column 
+  df7 <- df6 %>%
+    adorn_totals("row")
+  
+  # drop column 1
+  df8 <- df7 %>%
+    select(-c(genome_name))
+  
+  #drop rows (only keep last row  that contains sum total for each col)
+  df9 <- df8[-c(1:n_group), ]
+  
+  #transpose
+  df10 <- df9 %>% 
+    melt() %>% 
+    rename(gene_cluster_id = variable, sum = value)
+  
+  # add col for bin
+  df11 <- df10 %>% 
+    mutate(Bin = case_when(sum == n_group ~ paste0(group,"_Core"),
+                           sum > 1 & sum < n_group ~ paste0(group,"_Acc"),
+                           sum == 1 ~ paste0(group,"_Single")))
+  
+  # merge with group_pan_summary_df (df1) by gene-cluster-ID
+  df12 <- merge(df11, df1, by = "gene_cluster_id")
+  
+  # write data frame
+  write.table(df12, paste0("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/",group,"_pan_summary.txt"), sep = "\t", row.names = FALSE, quote = FALSE)
+  
+}
+
+species_group_gene_caller_binning <- function(group,focal_genome) {
+  
+  # load data frame
+  focal_df <- read.table(paste0("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/",group,"_pan_summary.txt"), header = TRUE, sep = "\t")
+  
+  # For focal genome, filter by the genome ID, subset columns so that we have Bin, bin_name and gene_callers_id
+  # rename Bin to group_bin, bin_name to genus_bin 
+  # re-order so that gene_callers_id is first column
+  focal_df_2 <- focal_df %>% 
+    filter(genome_name == focal_genome) %>% 
+    select(c(gene_callers_id, Bin, bin_name)) %>% 
+    rename(group_bin = Bin, genus_bin = bin_name)
+  
+  
+  # re-code genus_bin vvalues to reflect their status as genus
+  focal_df_3 <- focal_df_2 %>% 
+    mutate(genus_bin=recode(genus_bin, 'Genus_core'='Genus_core', 'Accessory'='Genus_Acc', 'Singletons' = 'Genus_Single'))
+  
+  # write data frame
+  write.table(focal_df_3, paste0("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/",focal_genome,"gene_caller_ID_binning.txt"), sep = "\t", row.names = FALSE, quote = FALSE)
+  
+}
+
+```
+
+
+First determin gene cluster bins for species
+```{r run group-gene-cluster-binning function}
+library(janitor)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+
+species_group_gene_cluster_binning("H_parainfluenzae") # running
+species_group_gene_cluster_binning("A_sp_HMT_458") # done; successful
+
+```
+
+Next determine gene-caller bins for each species group; This data will go into the profile db later. 
+```{r run group-gene-caller-binning function}
+
+library(janitor)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+
+species_group_gene_caller_binning("H_parainfluenzae", "H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1")
+species_group_gene_caller_binning("H_parainfluenzae", "H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1")
+species_group_gene_caller_binning("A_sp_HMT_458", "A_sp_HMT_458_str_W10330_id_GCA_000466335_1")
+
+```
+
+
+
+
+Color scheme: 
+
+Genus Core = f57676
+Genus Acc = 8fc1eb
+Genus Single = e6d200
+Species Core = 8f0606
+Species Acc/Single = 000000
+Ribosomal (not translated) = 15ff00
+d500ff TD
+00f245 BM
+fc0000 SUPP
+
+A_sp_HMT_458_str_W10330_id_GCA_000466335_1
+```{bash A_sp_HMT_458_str_W10330_id_GCA_000466335_1 profile}
+DIR=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/07_GENE_LEVEL
+PROFILE=A_sp_HMT_458_str_W10330_id_GCA_000466335_1_gene_level_detection_profile.db
+DETECTION=A_sp_HMT_458_str_W10330_id_GCA_000466335_1-gene_detection.txt-COMBO-30
+LAYERS=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/A_sp_HMT_458_str_W10330_id_GCA_000466335_1gene_caller_ID_binning.txt
+ITEMS_ORDER=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/22_GENE_LEVEL/23_GENE_LEVEL_DETECTION/A_sp_HMT_458_str_W10330_id_GCA_000466335_1-gene_detection_items_order.txt
+
+
+# display 
+anvi-interactive -p $DIR/$PROFILE -d $DIR/$DETECTION --manual \
+                 -I 127.0.0.1 \
+                 -P 8901 \
+                 --server-only
+                 
+# import gene_caller_binning file to profile db
+anvi-import-misc-data -p $DIR/$PROFILE -t items $LAYERS              
+
+# run display again to make final edits
+anvi-interactive -p $DIR/$PROFILE -d $DIR/$DETECTION --manual \
+                 -I 127.0.0.1 \
+                 -P 8901 \
+                 --server-only \
+                 --items-order $ITEMS_ORDER
+
+# use the following command to look up functions for gene caller IDs of interest 
+cat $PAN_DIR/SUMMARY/P_0622_Haemophilus_Aggregatibacter_gene_clusters_summary.txt | awk '/129672/ && /A_sp_HMT_458_str_W10330_id_GCA_000466335_1/' 
+```
+
+
+
+
+
+H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1
+```{bash H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1 profile}
+DIR=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/07_GENE_LEVEL
+PROFILE=H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1_gene_level_detection_profile.db
+DETECTION=H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1-gene_detection.txt-COMBO-30
+LAYERS=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1gene_caller_ID_binning.txt
+ITEMS_ORDER=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/22_GENE_LEVEL/23_GENE_LEVEL_DETECTION/H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1-gene_detection_items_order.txt
+
+
+# display 
+anvi-interactive -p $DIR/$PROFILE -d $DIR/$DETECTION --manual \
+                 -I 127.0.0.1 \
+                 -P 8901 \
+                 --server-only \
+                 --items-order $ITEMS_ORDER
+                 
+# import gene_caller_binning file to profile db
+anvi-import-misc-data -p $DIR/$PROFILE -t items $LAYERS
+
+# display 
+anvi-interactive -p $DIR/$PROFILE -d $DIR/$DETECTION --manual \
+                 -I 127.0.0.1 \
+                 -P 8901 \
+                 --server-only \
+                 --items-order $ITEMS_ORDER
+                 
+ 
+```
+
+H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1
+```{bash H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1 profile}
+DIR=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/07_GENE_LEVEL
+PROFILE=H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1_gene_level_detection_profile.db
+DETECTION=H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1-gene_detection.txt-COMBO-30
+LAYERS=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/09_PANGENOME/H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1gene_caller_ID_binning.txt
+ITEMS_ORDER=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/22_GENE_LEVEL/23_GENE_LEVEL_DETECTION/H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1-gene_detection_items_order.txt
+
+anvi-interactive -p $DIR/$PROFILE -d $DIR/$DETECTION --manual \
+                 -I 127.0.0.1 \
+                 -P 8901 \
+                 --server-only \
+                 --items-order $ITEMS_ORDER
+                 
+# import gene_caller_binning file to profile db
+anvi-import-misc-data -p $DIR/$PROFILE -t items $LAYERS
+
+# display 
+anvi-interactive -p $DIR/$PROFILE -d $DIR/$DETECTION --manual \
+                 -I 127.0.0.1 \
+                 -P 8901 \
+                 --server-only \
+                 --items-order $ITEMS_ORDER
+
+```
+
+
+
+# Percent genes detected at 90% threshold per top 30 metagenomes ranked by median coverage
+
+The following will produce bar plots of the mean proportion of genes detected in metagenomes for each genome for each oral site. Here detection was determined as 90% of nucleotides having at least 1x coverage. Also, only metagenomes in which the reference genome was detected (50% nT with 1x coverage) were included. *Not averaged over metagenomes per site*
+
+```{r}
+
+source("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/SCRIPTS/Gene_detection_bar_plots.R")
+
+```
+
+
+# Inspection of H_haemolyticus_str_M26166_id_GCA_003492745_1 gene coverage
+
+The H_haemolyticus_str_M26166_id_GCA_003492745_1 genome recruited reads from SUPP, TD and BM samples, distinguishing itself from all other H. haemolyticus genomes and instead resembling H. parainfluenzae distributions. Inspection of the gene-level coverage bar plots revealed that only a small proportion of genes had 90% coverage. What are those genes? Are they mobile elements that are readily shared with other bacteria?
+
+```{r}
+
+# get list of gene caller IDs that were detected
+df <- read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/07_GENE_LEVEL/COMBO_30_DATA/H_haemolyticus_str_M26166_id_GCA_003492745_1-gene_detection.txt-COMBO-30", header = TRUE, sep = "\t")
+
+
+# make gene_callers_id a factor
+  df$gene_callers_id <- as.factor(df$gene_callers_id)
+  # transpose df1 wide to long
+  melted_df <- melt(df)
+  
+  melted_df$variable <- as.factor(melted_df$variable)
+  melted_df$value<- as.numeric(melted_df$value)
+  
+  # make site variable
+  melted_df <- melted_df %>% mutate(site = case_when(grepl('TD_', variable) ~ 'TD', 
+                                                                       grepl('PP_', variable) ~ 'SUPP',
+                                                                       grepl('BM_', variable) ~ 'BM'))
+  
+# create new variable called prop_detected (>= 0.9 == "yes"; <0.9 == "no")
+  melted_df_detection_BM <- melted_df %>% 
+    mutate(detected = case_when(value >= 0.900 ~ 'yes', value < 0.900 ~ 'no')) %>% 
+    filter(site == "BM") %>% 
+    filter(detected == 'yes') %>% 
+    droplevels()
+  
+  melted_df_detection_TD <- melted_df %>% 
+    mutate(detected = case_when(value >= 0.900 ~ 'yes', value < 0.900 ~ 'no')) %>% 
+    filter(site == "TD") %>% 
+    filter(detected == 'yes') %>% 
+    droplevels()
+  
+  melted_df_detection_SUPP <- melted_df %>% 
+    mutate(detected = case_when(value >= 0.900 ~ 'yes', value < 0.900 ~ 'no')) %>% 
+    filter(site == "SUPP") %>% 
+    filter(detected == 'yes') %>% 
+    droplevels()
+  
+  detected_genes_BM <- unique(melted_df_detection_BM$gene_callers_id) # 387 genes
+  detected_genes_TD <- unique(melted_df_detection_TD$gene_callers_id)# 123 genes
+  detected_genes_SUPP <- unique(melted_df_detection_SUPP$gene_callers_id) # 134 genes
+  
+  intersect_BM_TD <- intersect(detected_genes_BM, detected_genes_TD)
+  intersect_BM_TD_SUPP <- intersect(intersect_BM_TD, detected_genes_SUPP)
+
+  intersect_BM_TD_SUPP_df <- data.frame("detected_genes" = as.numeric(intersect_BM_TD_SUPP)) # 80 genes 
+
+  write.table(intersect_BM_TD_SUPP_df, "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/07_GENE_LEVEL/H_haemolyticus_str_M26166_id_GCA_003492745_1_detected_genes_intersect_BM_TD_SUPP.txt", row.names = FALSE, quote = FALSE)
+```
+
+
+
+```{bash}
+
+# use the following command to look up functions for gene caller IDs of interest 
+head -n1 $PAN_DIR/SUMMARY/P_0622_Haemophilus_Aggregatibacter_gene_clusters_summary.txt
+
+genes=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/07_GENE_LEVEL/H_haemolyticus_str_M26166_id_GCA_003492745_1_detected_genes_intersect_BM_TD_SUPP.txt
+genes_functions=/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/07_GENE_LEVEL/H_haemolyticus_str_M26166_id_GCA_003492745_1_detected_genes_intersect_BM_TD_SUPP_FUNCTIONS.txt
+
+head -n1 $PAN_DIR/SUMMARY/P_0622_Haemophilus_Aggregatibacter_gene_clusters_summary.txt > $genes_functions
+
+for gene in `cat $genes | awk -F"\t" 'NR>1'`
+do
+cat $PAN_DIR/SUMMARY/P_0622_Haemophilus_Aggregatibacter_gene_clusters_summary.txt | awk -v myvar="$gene" '$5~myvar && /H_haemolyticus_str_M26166_id_GCA_003492745_1/' >> $genes_functions
+done
+```
+
+
+*See H_haemolyticus_str_M26166_id_GCA_003492745_1 hmmer analysis of detected genes in TD, BM and SUPP.Rmd for a HMMER search*
+

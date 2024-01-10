@@ -1,0 +1,3213 @@
+---
+title: "Pastuerellaceae relative abundance"
+output: html_document
+date: '2022-09-16'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load packages 
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(scales)
+library(vegan)
+library(janitor)
+library(egg)   
+library(ggdendro)
+library(forcats)
+library(RColorBrewer)
+library(grid)
+
+```
+
+
+
+Load mean coverage Q2Q3 data into R; Load detection data into R; Load mapping stats into R
+```{r}
+
+# Load mean coverage Q2Q3 data into R
+df_coverage = read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/13_DETECTED_GENOMES/P_0622_Haemophilus_Aggregatibacter-mean_coverage_Q2Q3.txt", header=TRUE)
+
+# Load detection data into R
+df_detect = read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/13_DETECTED_GENOMES/P_0622_Haemophilus_Aggregatibacter-detection.txt", header=TRUE)
+
+# Load metadata into R
+#metadata <- read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/sequencing-metadata-count-QC.tsv", header=TRUE)
+
+mapping_metadata_merged <- read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/P_0622_Haemophilus_Aggregatibacter-mapping_stats_new_metadata_merged.csv", header=TRUE)
+```
+
+Merge mapping data with metagenome metadata...
+```{r}
+
+# Load mapping data into R
+mapping <- read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/P_0622_Haemophilus_Aggregatibacter-mapping_stats_new.txt", header=TRUE)
+
+# Merge the two 
+mapping_metadata_merged <- merge(metadata, mapping, by.x = "Internal_ID", by.y = "layers")
+
+# Add variable for percentage reads mapped
+mapping_metadata_merged <- mapping_metadata_merged %>% 
+  mutate(percent_reads_mapped = 100*(total_reads_mapped/QC_total_reads))
+
+# rename metagenomes to just site name
+mapping_metadata_merged$Internal_ID_2=gsub("_HC_HMP","",mapping_metadata_merged$Internal_ID)
+
+# Save data frame
+write.csv(mapping_metadata_merged,"/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/P_0622_Haemophilus_Aggregatibacter-mapping_stats_new_metadata_merged.csv", row.names = FALSE, quote = FALSE)
+
+```
+
+```{r}
+
+# load csv file with genome IDs and colors; theis file was made when the tanglegram was made
+bins_and_colors <-read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/detection_lables_colors.csv", header = TRUE)
+
+#Genome order based on Pangenome gene-cluster frequency clustering
+levels_Genome_ID=bins_and_colors$bins
+
+# Genome colors
+tick_colors=bins_and_colors$new_species_ID_colors
+
+```
+
+Make variable for detected/un-detected based on 50% minimum breadth.
+```{r}
+
+# change data frame from wide to long format
+melted_df_detect <- melt(df_detect)
+
+melted_df_detect <- melted_df_detect %>% 
+  mutate(detected = ifelse(value >= 0.5, "detected", "un-detected"))
+
+melted_df_detect$detected <- as.factor(melted_df_detect$detected)
+
+melted_df_detect_filtered <- melted_df_detect %>% 
+  filter(detected == "detected")
+
+#Filter mean_coverage_Q2Q3 data frame by detected genomes
+# change covergae data frame from wide to long format
+melted_df_coverage <- melt(df_coverage)
+
+#melted_df_detect_filtered$Genome_ID <- melted_df_detect_filtered$bins
+filtered_melted_df <-merge(melted_df_coverage, melted_df_detect_filtered, by=c("variable","bins")) 
+
+filtered_melted_df <- filtered_melted_df %>% dplyr::rename(coverage=value.x, breadth=value.y)
+
+```
+
+# Strain-level Detection (50% breadth @ 1x coverage) plot
+
+```{r}
+
+# rename metagenomes to just site name
+melted_df_detect$variable=gsub("_HC_HMP","",melted_df_detect$variable)
+
+
+# make oral site variable for facet grid
+melted_df_detect_2 <- melted_df_detect %>% mutate(site = case_when(grepl('TD_', variable) ~ 'TD', 
+                                      grepl('KG_', variable) ~ 'KG', 
+                                      grepl('PP_', variable) ~ 'SUPP',
+                                      grepl('PB_', variable) ~ 'SUBP',
+                                      grepl('SA_', variable) ~ 'SV',
+                                      grepl('TH_', variable) ~ 'TH',
+                                      grepl('PT_', variable) ~ 'PT',
+                                      grepl('HP_', variable) ~ 'HP',
+                                      grepl('BM_', variable) ~ 'BM')) 
+
+
+# specify order for site terms
+melted_df_detect_2$site <- factor(melted_df_detect_2$site, levels = c("SUPP", "SUBP", "KG", "BM", "TD", "PT", "HP", "TH", "SV"))
+
+# sort "variable" based on pre-sorted values of "site"
+melted_df_detect_2 <- melted_df_detect_2 %>%
+  arrange(site, variable) %>%               # sort your dataframe
+  mutate(variable = factor(variable, unique(variable))) # reset your factor-column based on that order
+
+
+# make 1 or 0 binary variable for detection
+melted_df_detect_2$detected <- as.factor(melted_df_detect_2$detected)
+melted_df_detect_2$detected <- as.factor(melted_df_detect_2$detected)
+
+melted_df_detect_2 <- melted_df_detect_2 %>%  mutate(detection_binary = case_when(grepl("un-detected", detected) ~ 0, 
+                                                           grepl("detected", detected) ~ 1))
+                                             
+melted_df_detect_2$detection_binary <- as.factor(melted_df_detect_2$detection_binary)
+
+# reorder genomes
+melted_df_detect_2$bins <- factor(melted_df_detect_2$bins, levels = levels_Genome_ID)
+
+# join metadata with to get total reads mapped into data frame
+melted_strain_detection = merge(mapping_metadata_merged, melted_df_detect_2, by.x = "Internal_ID_2", by.y = "variable") 
+
+dodge <- position_dodge(width=0.9)
+
+total_reads_mapped_detection <- ggplot(data = melted_strain_detection, aes(x=reorder(Internal_ID, -total_reads_mapped), y=total_reads_mapped)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "darkblue") +
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25000000), breaks=seq(0,25000000,by=25000000), oob=squish, labels = scales::comma) +
+  #coord_cartesian(ylim=c(0,100000000)) +
+  xlab(NULL)+
+  ylab("No. of reads mapped") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "lightblue")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_blank(),
+        strip.text.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(-0.001,1,-0.001,1), "cm"))
+#total_reads_mapped_detection
+
+plot_total_reads_detection <- ggplot(data = melted_strain_detection, aes(x=reorder(Internal_ID, -total_reads_mapped), y=QC_total_reads)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "darkblue") +
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 200000000), breaks=seq(0,200000000,by=200000000), oob=squish, labels = scales::comma) +
+  #coord_cartesian(ylim=c(0,100000000)) +
+  xlab(NULL)+
+  ylab("Total reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "lightblue")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_blank(),
+        strip.text.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(-0.001,1,-0.001,1), "cm"))
+#plot_total_reads_detection
+
+
+plot_percent_reads_mapped_detection <- ggplot(data = melted_strain_detection, aes(x=reorder(Internal_ID, -total_reads_mapped), y=percent_reads_mapped)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "darkblue") +
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 50), breaks=seq(0,50,by=50), oob=squish, labels = scales::comma) +
+  #coord_cartesian(ylim=c(0,100000000)) +
+  xlab(NULL)+
+  ylab("Percent reads mapped (%)") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "lightblue")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_blank(),
+        strip.text.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(-0.001,1,-0.001,1), "cm"))
+#plot_percent_reads_mapped_detection
+
+
+plot_strain_level_detection <- ggplot(data = melted_strain_detection, aes(x=reorder(Internal_ID,-total_reads_mapped), y=bins, fill=detection_binary)) +
+  geom_tile(height=1, width=1) + 
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x") + 
+  scale_fill_manual(values = c("black", "cyan")) +
+  scale_y_discrete(limits = rev(levels(melted_strain_detection$bins))) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  theme_classic() + 
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.ticks.y = element_line(size = 1, colour = rev(tick_colors)),
+        axis.ticks.length = unit(1, "cm"),
+        axis.text.x=element_blank(),
+        #axis.text.y =  element_text(face = "italic"),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "black")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_blank(),
+        #panel.border = element_rect(colour = "black", fill = NA),
+        strip.text=element_text(size=12)) + 
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm"))
+#plot_strain_level_detection
+
+
+Strain_plot_detection_total_reads <- egg::ggarrange(plot_percent_reads_mapped_detection, plot_total_reads_detection, total_reads_mapped_detection, plot_strain_level_detection,
+          ncol = 1,
+          heights = c(0.15,0.15,0.15,2))
+```
+
+```{r}
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Detection/Strain_level_Haemophilus_and_Aggregatibacter_detection_50breadth_1x.pdf",Strain_plot_detection_total_reads, width = 10, height = 8)
+
+
+# save data frame 
+write.csv(melted_strain_detection,"/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Detection/Strain_level_Haemophilus_and_Aggregatibacter_detection_50breadth_1x.csv", row.names = FALSE, quote = FALSE)
+
+```
+
+# Species level relative abundance
+
+Group genomes by species tyoe based on pangenome, ANI, phylogeny and detection profiles.
+
+For each metagenome, calculate relative abundance of each genome (ie. bin) by dividing the mean covergae by the sum of mean coverages of all the genomes for that metagenome; using only detected genomes
+
+```{r blue to red version with clustering}
+# load csv file with genome IDs and colors; theis file was made when the tanglegram was made
+bins_and_colors <-read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/detection_lables_colors.csv", header = TRUE)
+
+# new species IDs based detection profiles
+species_levels=as.factor(bins_and_colors$new_species_ID_detection)
+
+# new species colors based detection profiles
+species_tick_colors=bins_and_colors$new_species_ID_colors_detection
+
+# select columns and transpose from long to wide
+meanCov <- filtered_melted_df %>% 
+  dplyr::select(variable, bins, coverage) %>% 
+  pivot_wider(id_cols=bins, names_from=variable, values_from=coverage)
+
+# chnage NA values to zeros
+meanCov[is.na(meanCov)] <- 0
+
+# transpose data frame
+rownames <- meanCov$bins
+meanCovT <- as.data.frame(t(meanCov[-1]))
+colnames(meanCovT) <- rownames
+
+# mean coverage of a genome / sum of mean coverages of all genomes in a sample
+relAbsT <- decostand(meanCovT, method = "total")
+
+# transpose relative abundance matrix
+relAbs <- t(relAbsT)
+
+# multiply by 100
+relAbs <- 100*relAbs 
+
+# change covergae data frame from wide to long format
+melted_relAbs <- reshape2::melt(relAbs) %>% 
+  dplyr::rename(variable=Var2, Genome_ID=Var1, relAbundance=value)
+
+
+# merge with relabundance
+melted_relAbs_merged <- merge(melted_relAbs,bins_and_colors, by.x = 'Genome_ID', by.y = 'bins')
+
+# set species ID as factor
+melted_relAbs_merged$new_species_ID_detection <- as.factor(melted_relAbs_merged$new_species_ID_detection)
+
+# rename metagenomes to just site name
+melted_relAbs_merged$variable=gsub("_HC_HMP","",melted_relAbs_merged$variable)
+
+
+# make oral site variable for facet grid
+melted_relAbs_merged <- melted_relAbs_merged %>% mutate(site = case_when(grepl('TD_', variable) ~ 'TD', 
+                                      grepl('KG_', variable) ~ 'KG', 
+                                      grepl('PP_', variable) ~ 'SUPP',
+                                      grepl('PB_', variable) ~ 'SUBP',
+                                      grepl('SA_', variable) ~ 'SV',
+                                      grepl('TH_', variable) ~ 'TH',
+                                      grepl('PT_', variable) ~ 'PT',
+                                      grepl('HP_', variable) ~ 'HP',
+                                      grepl('BM_', variable) ~ 'BM')) 
+
+#Sum abundance by oral site, groupID and variable to obtain the relative abundance of each species (aka groupID) for each metagenome (aka variable)
+melted_relAbs_merged_summed <- melted_relAbs_merged %>% 
+  group_by(site, new_species_ID_detection, variable) %>% 
+  dplyr::summarise(sum = sum(relAbundance))
+  
+
+ # merge total reads mapped into data frame
+melted_relAbs_merged_summed = merge.data.frame(mapping_metadata_merged, melted_relAbs_merged_summed, by.x = "Internal_ID_2", by.y = "variable") 
+
+# reorder oral sites
+melted_relAbs_merged_summed$site <- factor(melted_relAbs_merged_summed$site, levels = c("SUPP", "SUBP", "KG", "BM", "TD", "PT", "HP", "TH", "SV"))
+
+melted_relAbs_merged_summed
+
+# subset data frame for clustering species
+melted_relAbs_merged_summed_clustering_df <- melted_relAbs_merged_summed %>% 
+  select(new_species_ID_detection, Internal_ID, sum)
+
+# pivot wider
+wide_df <- melted_relAbs_merged_summed_clustering_df %>% pivot_wider(names_from = Internal_ID, values_from = sum)
+
+# make tibble into data frame object
+wide_df <- as.data.frame(wide_df)
+
+# rename row names to species IDs
+wide_df2 <- wide_df[,-1]
+rownames(wide_df2) <- wide_df[,1]
+
+# add rows of zeroes for undetected species
+A_actinomycetecomitans <- t(data.frame("A_actinomycetecomitans" = seq(from = 0,to = 0, length.out = (ncol(wide_df)) - 1)))
+colnames(A_actinomycetecomitans) <- colnames(wide_df2)
+
+H_massiliensis <- t(data.frame("H_massiliensis" = seq(from = 0,to = 0, length.out = (ncol(wide_df)) - 1)))
+colnames(H_massiliensis) <- colnames(wide_df2)
+
+H_ducreyi <- t(data.frame("H_ducreyi" = seq(from = 0,to = 0, length.out = (ncol(wide_df)) - 1)))
+colnames(H_ducreyi) <- colnames(wide_df2)
+
+H_aegyptius <- t(data.frame("H_aegyptius" = seq(from = 0,to = 0, length.out = (ncol(wide_df)) - 1)))
+colnames(H_aegyptius) <- colnames(wide_df2)
+
+wide_df2 <- rbind(wide_df2, A_actinomycetecomitans, H_massiliensis, H_ducreyi, H_aegyptius)  
+
+wide_matrix <- as.matrix(wide_df2)
+
+#create distance matrix for species  based on aitchison distances
+dist_df <- coda.base::dist(wide_matrix, method = "aitchison")
+
+# calculate Bray-Curtis distance among samples
+dist_df <- vegan::vegdist(wide_matrix, method = "bray")
+
+
+#Replace na values with 0 using is.na()
+dist_df[dist_df=="NaN"]<-0
+  
+# Hierarchical clustering using Complete Linkage
+hc <- hclust(dist_df, method = "complete" )
+
+# create dedrogram object
+dhc <- as.dendrogram(hc)
+
+# create rectangular lines object
+ddata <- dendro_data(dhc, type = "rectangle")
+
+species_dend_plot <- ggplot(segment(ddata)) + 
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend), linewidth = 1) + 
+  coord_flip() + 
+  scale_y_reverse(expand = c(0.2, 0)) +
+  scale_x_reverse() +
+  theme_classic() +
+  theme(axis.ticks.y = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(0,0,0,0), "cm"))
+
+# save dend plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/Relative_abundance_species_dendrogram_all_sites.pdf",species_dend_plot, width = 5, height = 7)
+
+
+
+# reorder genomes for triples plot based on hclust
+species_order <- hc$labels[hc$order]
+
+melted_relAbs_merged_summed$new_species_ID_detection <- factor(melted_relAbs_merged_summed$new_species_ID_detection, levels = species_order)
+
+
+##### Sample order; need to cluster each site seperately, then get order, and then concatenate the orders ###
+
+# created vector with 5 characters
+columns= c("order")
+
+# pass this vector length to ncol parameter
+# and nrow with 0
+site_order_df = data.frame(matrix(nrow = 0, ncol = length(columns)))
+
+# assign column names
+colnames(site_order_df) = columns
+
+
+site_list <- list("SUPP", "SUBP", "KG", "BM", "TD", "PT", "TH", "SV") # ignore HP since there is only one sample
+
+
+for (oral_site in site_list) {
+  
+  # filter df by site
+  site_df <- melted_relAbs_merged_summed %>% 
+    filter(site == oral_site)
+  
+  # subset data frame for clustering species
+  site_clustering_df <- site_df %>% 
+    select(new_species_ID_detection, Internal_ID, sum)
+  
+  # pivot wider
+  site_wide_df <- site_clustering_df %>% pivot_wider(names_from = Internal_ID, values_from = sum)
+  
+  # make tibble into data frame object
+  site_wide_df <- as.data.frame(site_wide_df)
+  
+  # rename row names to species IDs
+  site_wide_df2 <- site_wide_df[,-1]
+  rownames(site_wide_df2) <- site_wide_df[,1]
+  
+  # add rows of zeroes for undetected species
+  A_actinomycetecomitans <- t(data.frame("A_actinomycetecomitans" = seq(from = 0,to = 0, length.out = (ncol(site_wide_df)) - 1)))
+  colnames(A_actinomycetecomitans) <- colnames(site_wide_df2)
+  
+  H_massiliensis <- t(data.frame("H_massiliensis" = seq(from = 0,to = 0, length.out = (ncol(site_wide_df)) - 1)))
+  colnames(H_massiliensis) <- colnames(site_wide_df2)
+  
+  H_ducreyi <- t(data.frame("H_ducreyi" = seq(from = 0,to = 0, length.out = (ncol(site_wide_df)) - 1)))
+  colnames(H_ducreyi) <- colnames(site_wide_df2)
+  
+  H_aegyptius <- t(data.frame("H_aegyptius" = seq(from = 0,to = 0, length.out = (ncol(site_wide_df)) - 1)))
+  colnames(H_aegyptius) <- colnames(site_wide_df2)
+  
+  site_wide_df2 <- rbind(site_wide_df2, A_actinomycetecomitans, H_massiliensis, H_ducreyi, H_aegyptius)  
+  
+  site_wide_matrix <- as.matrix(site_wide_df2)
+  
+  # transpose data frame so that we can cluster samples based on euclidan distance and complete linkage
+  trans_site_wide_matrix <- t(site_wide_matrix)
+  
+  # calculate Bray-Curtis distance among samples
+  site_dist_df <- vegan::vegdist(trans_site_wide_matrix, method = "bray")
+  
+  #Replace na values with 0 using is.na()
+  site_dist_df[site_dist_df=="NaN"]<-0
+  
+  # Hierarchical clustering using Complete Linkage
+  site_hc <- hclust(site_dist_df, method = "complete" )
+  
+  # create dedrogram object
+  site_dhc <- as.dendrogram(site_hc)
+  
+  # create rectangular lines object
+  site_ddata <- dendro_data(site_dhc, type = "rectangle")
+  
+  site_samples_dend_plot <- ggplot(segment(site_ddata)) + 
+    geom_segment(aes(x = x, y = y, xend = xend, yend = yend), linewidth = 1) + 
+    coord_flip() + 
+    scale_y_reverse(expand = c(0.2, 0)) +
+    scale_x_reverse() +
+    theme_classic() +
+    theme(axis.ticks.y = element_blank(),
+          axis.ticks.x=element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y =  element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          axis.title.y = element_blank(),
+          axis.title.x = element_blank()) +
+    theme(panel.spacing.x=unit(0.05, "lines"),
+          plot.margin=unit(c(0,0,0,0), "cm"))
+  
+  # save dend plot
+  ggsave(paste0("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/Relative_abundance_",oral_site,"_samples_dendrogram_all_sites.pdf"),site_samples_dend_plot, width = 5, height = 7)
+  
+  
+  # get list of sample order for site
+  
+  site_order <- data.frame(order = site_hc$labels[site_hc$order])
+  
+  site_order_df <- rbind(site_order_df, site_order)
+  
+}
+
+
+# add HP sample to the end of the order 
+melted_relAbs_merged_summed$Internal_ID[melted_relAbs_merged_summed$site == "HP"] #"HP_HC_HMP_S082_01"
+site_order_df <- rbind(site_order_df, "HP_HC_HMP_S082_01")
+
+# reorder samples based on concatenated hclust order
+samples_order <- melted_relAbs_merged_summed$Internal_ID <- factor(melted_relAbs_merged_summed$Internal_ID, levels = site_order_df$order)
+
+# set colors for heatmap
+paleta_new = rev(brewer.pal(n = 11, name = "RdYlBu"))
+
+# set dodge for plots
+dodge <- position_dodge(width=0.9)
+
+# plot 1
+p1 <- ggplot(data = melted_relAbs_merged_summed, aes(x=Internal_ID, y=new_species_ID_detection, fill=sum)) + 
+  geom_tile(height=1, width=1) + #color = "black"
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x") + 
+  scale_fill_gradientn(colours = paleta_new, limits=c(0, 100), breaks=seq(0,100,by=10),oob=squish) + 
+  scale_y_discrete(limits = levels(melted_relAbs_merged_summed$new_species_ID_detection)) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  guides(fill = guide_colourbar(barwidth = 1,
+                                barheight = 10,
+                                title = "%",
+                                ticks = TRUE,
+                                ticks.colour = "white",
+                                ticks.linewidth = 0.5)) +
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.background = element_rect(fill = "black"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm")) 
+
+dodge <- position_dodge(width=0.9)
+
+reads_mapped <- ggplot(data = melted_relAbs_merged_summed, aes(x=Internal_ID, y=total_reads_mapped)) + 
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x") + 
+  geom_bar(stat = 'identity',position = dodge, fill = "steelblue") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25000000), breaks=seq(0,25000000,by=25000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Mapped reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "lightgray"),
+        strip.text.x = element_blank(),
+        plot.margin=unit(c(0,0,0.1,0), "cm"))
+
+total_reads <- ggplot(data = melted_relAbs_merged_summed, aes(x=Internal_ID, y=QC_total_reads)) + 
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x") + 
+  geom_bar(stat = 'identity',position = dodge, fill = "steelblue") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 100000000), breaks=seq(0,100000000,by=100000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Total reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "lightgray"),
+        strip.text.x = element_blank(),
+        plot.margin=unit(c(1,0,0.1,0), "cm"))
+
+percent_reads_mapped <- ggplot(data = melted_relAbs_merged_summed, aes(x=Internal_ID, y=percent_reads_mapped)) + 
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x") + 
+  geom_bar(stat = 'identity',position = dodge, fill = "steelblue") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25), breaks=seq(0,25,by=25), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Percent mapped reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "lightgray"),
+        strip.text.x = element_blank(),
+        plot.margin=unit(c(0,0,-0.001,0), "cm"))
+
+
+
+# combine total mapped reads plot and relab tile plot
+final_plot <- egg::ggarrange(total_reads,
+                             reads_mapped,
+                             percent_reads_mapped,
+                             p1,
+                             ncol = 1,
+                             heights = c(0.25,0.25,0.25,2))
+# save final plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/Species_level_Haemophilus_and_Aggregatibacter_relabsQ2Q3_detected_only_blue_to_red_version.pdf",final_plot, width = 9, height = 6)
+
+
+```
+
+
+
+```{r old version}
+# set colors for heatmap
+paleta <- c("black", "navyblue", "dodgerblue4","darkcyan", "aquamarine", "azure")
+
+# plot
+plot100 <- ggplot(data = melted_relAbs_merged_summed, aes(x=reorder(Internal_ID,-total_reads_mapped), y=new_species_ID_detection, fill=sum)) + 
+  geom_tile(height=1, width=1) + 
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x") + 
+  scale_fill_gradientn(colours = paleta, limits=c(0, 100), breaks=seq(0,100,by=10),oob=squish) + 
+  scale_y_discrete(limits = rev(levels(melted_relAbs_merged_summed$new_species_ID_detection))) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  guides(fill = guide_colourbar(barwidth = 1,
+                                barheight = 10,
+                                title = "%",
+                                ticks = TRUE,
+                                ticks.colour = "white",
+                                ticks.linewidth = 0.5)) +
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "black")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_rect(colour = "black", fill = NA),
+        strip.text=element_text(size=12)) + 
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm"))
+
+
+dodge <- position_dodge(width=0.9)
+
+plot_total_reads_mapped_species_level <- ggplot(data = melted_relAbs_merged_summed, aes(x=reorder(Internal_ID, -total_reads_mapped), y=total_reads_mapped)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "blue") +
+  facet_grid(. ~ site , scales = "free", space = "free", switch = "x") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25000000), breaks=seq(0,25000000,by=25000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Mapped reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(size = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "white")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_blank(),
+        strip.text.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(1,1,-0.001,1), "cm"))
+
+
+
+# combine total mapped reads plot and relab tile plot
+plot_relabs_total_reads <- egg::ggarrange(plot_total_reads_mapped_species_level, plot100,
+          ncol = 1,
+          heights = c(0.25,2))
+
+# save final plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/Species_level_Haemophilus_and_Aggregatibacter_relabsQ2Q3_detected_only_new_version.pdf",plot_relabs_total_reads, width = 12, height = 6)
+
+
+# save relative abundance by species data set
+write.csv(file = "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/13_DETECTED_GENOMES/P_0622_Haemophilus_Aggregatibacter-SPECIES-LEVEL-relative_abundance_Q2Q3_detected_only.csv", melted_relAbs_merged_summed, row.names = FALSE, quote = FALSE)
+
+
+
+# Get sample sizes for oral sites
+melted_relAbs_merged_summed %>% 
+  group_by(site) %>% 
+  summarise(n = n()/17)
+```
+
+
+
+# Relative abundance grouped by subject ID (triple visists)
+
+
+```{r}
+library(egg)
+library(grid)
+
+melted_relAbs_merged_summed_SUPP <- melted_relAbs_merged_summed %>% 
+  filter(site == "SUPP") %>% 
+  droplevels()
+
+# Reorder facet_var based on a continuous variable
+melted_relAbs_merged_summed_SUPP$Subject_ID <- as.factor(melted_relAbs_merged_summed_SUPP$Subject_ID)
+melted_relAbs_merged_summed_SUPP$Subject_ID <- reorder(melted_relAbs_merged_summed_SUPP$Subject_ID, -melted_relAbs_merged_summed_SUPP$total_reads_mapped)
+
+
+# make lists of subjects grouped by number of samples per subjectID
+melted_relAbs_merged_summed_SUPP_singles_list <- melted_relAbs_merged_summed_SUPP %>% 
+  group_by(Subject_ID) %>% 
+  summarise(n = n()/17) %>% 
+  filter(n == 1) %>% 
+  select(Subject_ID)
+
+melted_relAbs_merged_summed_SUPP_doubles_list <- melted_relAbs_merged_summed_SUPP %>% 
+  group_by(Subject_ID) %>% 
+  summarise(n = n()/17) %>% 
+  filter(n == 2) %>% 
+  select(Subject_ID)
+
+melted_relAbs_merged_summed_SUPP_triples_list <- melted_relAbs_merged_summed_SUPP %>% 
+  group_by(Subject_ID) %>% 
+  summarise(n = n()/17) %>% 
+  filter(n == 3) %>% 
+  select(Subject_ID)
+
+# make data frames split by number of samples per subject
+melted_relAbs_merged_summed_SUPP_singles <- merge(melted_relAbs_merged_summed_SUPP, melted_relAbs_merged_summed_SUPP_singles_list, by = "Subject_ID")
+melted_relAbs_merged_summed_SUPP_doubles <- merge(melted_relAbs_merged_summed_SUPP, melted_relAbs_merged_summed_SUPP_doubles_list, by = "Subject_ID")
+melted_relAbs_merged_summed_SUPP_triples <- merge(melted_relAbs_merged_summed_SUPP, melted_relAbs_merged_summed_SUPP_triples_list, by = "Subject_ID")
+
+
+# set order of y axis
+# set levels of y axis
+levels = c("H_influenzae", "H_aegyptius", "H_sp_HMT_036", "H_seminalis", "H_haemolyticus", "H_parainfluenzae_group_V", "H_parainfluenzae_group_IV", "H_parainfluenzae_group_TD", "H_parainfluenzae_group_KG", "H_parainfluenzae_group_SUPP", "H_pittmaniae", "H_ducreyi", "H_sputorum", "H_paraphrohaemolyticus",
+           "H_parahaemolyticus", "A_sp_HMT_458", "A_segnis", "A_actinomycetemcomitans", "H_massiliensis", "A_kilianii", "A_aphrophilus")
+
+# reorder genomes
+melted_relAbs_merged_summed_SUPP_singles$new_species_ID_detection <- factor(melted_relAbs_merged_summed_SUPP_singles$new_species_ID_detection, levels = levels)
+melted_relAbs_merged_summed_SUPP_doubles$new_species_ID_detection <- factor(melted_relAbs_merged_summed_SUPP_doubles$new_species_ID_detection, levels = levels)
+
+melted_relAbs_merged_summed_SUPP$new_species_ID_detection <- factor(melted_relAbs_merged_summed_SUPP$new_species_ID_detection, levels = levels)
+
+
+
+# plots
+dodge <- position_dodge(width=0.9)
+
+SUPP_singles_plot <- ggplot(data = melted_relAbs_merged_summed_SUPP_singles, aes(x=reorder(Internal_ID,-total_reads_mapped), y=new_species_ID_detection, fill=sum)) + 
+  geom_tile(height=1, width=1, color = "black") + 
+  facet_grid(. ~ Subject_ID, scales = "free", space = "free", switch = "x") + 
+  scale_fill_gradientn(colours = paleta, limits=c(0, 100), breaks=seq(0,100,by=10),oob=squish) + 
+  scale_y_discrete(limits = levels(melted_relAbs_merged_summed_SUPP_singles$new_species_ID_detection)) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  guides(fill = guide_colourbar(barwidth = 1,
+                                barheight = 10,
+                                title = "%",
+                                ticks = TRUE,
+                                ticks.colour = "white",
+                                ticks.linewidth = 0.5)) +
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", colour = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "black")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_rect(colour = "black", fill = NA),
+        strip.text=element_text(size=10, angle = 90, vjust = 0.5, hjust=1)) + 
+  theme(panel.spacing.x=unit(0, "lines"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm")) 
+
+
+
+plot_total_reads_mapped_SUPP_singles_plot <- ggplot(data = melted_relAbs_merged_summed_SUPP_singles, aes(x=reorder(Internal_ID, -total_reads_mapped), y=total_reads_mapped)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "blue", fill = "blue") +
+  facet_grid(. ~ Subject_ID, scales = "free", space = "free", switch = "x") + 
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25000000), breaks=seq(0,25000000,by=25000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Mapped reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(size = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "white")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_blank(),
+        strip.text.x = element_blank()) +
+  theme(panel.spacing.x=unit(0, "lines"),
+        plot.margin=unit(c(1,1,-0.001,1), "cm"))
+
+
+# combine total mapped reads plot and relab tile plot
+plot_final_SUPP_singles_plot <- egg::ggarrange(plot_total_reads_mapped_SUPP_singles_plot, SUPP_singles_plot,
+          ncol = 1,
+          heights = c(0.25,2))
+
+# save final supp singles plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/By_subject_ID/SUPP_singles.pdf",plot_final_SUPP_singles_plot, width = 12, height = 6)
+
+
+SUPP_doubles_plot <- ggplot(data = melted_relAbs_merged_summed_SUPP_doubles, aes(x=reorder(Internal_ID,-Sample_time), y=new_species_ID_detection, fill=sum)) + 
+  geom_tile(height=1, width=1, color = "black") + 
+  facet_grid(. ~ Subject_ID, scales = "free", space = "free", switch = "x") + 
+  scale_fill_gradientn(colours = paleta, limits=c(0, 100), breaks=seq(0,100,by=10),oob=squish) + 
+  scale_y_discrete(limits = levels(melted_relAbs_merged_summed_SUPP_doubles$new_species_ID_detection)) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  guides(fill = guide_colourbar(barwidth = 1,
+                                barheight = 10,
+                                title = "%",
+                                ticks = TRUE,
+                                ticks.colour = "white",
+                                ticks.linewidth = 0.5)) +
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", colour = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "black")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_rect(colour = "black", fill = NA),
+        strip.text=element_text(size=12, angle = 90, vjust = 0.5, hjust=1)) + 
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm")) 
+
+plot_total_reads_mapped_SUPP_doubles_plot <- ggplot(data = melted_relAbs_merged_summed_SUPP_doubles, aes(x=reorder(Internal_ID, -Sample_time), y=total_reads_mapped)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "blue", fill = "blue") +
+  facet_grid(. ~ Subject_ID, scales = "free", space = "free", switch = "x") + 
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25000000), breaks=seq(0,25000000,by=25000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Mapped reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(size = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "white")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_blank(),
+        strip.text.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(1,1,-0.001,1), "cm"))
+
+
+# combine total mapped reads plot and relab tile plot
+plot_final_SUPP_doubles_plot <- egg::ggarrange(plot_total_reads_mapped_SUPP_doubles_plot, SUPP_doubles_plot,
+          ncol = 1,
+          heights = c(0.25,2))
+
+# save final supp singles plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/By_subject_ID/SUPP_doubles.pdf",plot_final_SUPP_doubles_plot, width = 12, height = 6)
+
+
+
+# cluster genomes based on euclidean distances and complete linkage
+melted_relAbs_merged_summed_SUPP_triples_cluster_df <- melted_relAbs_merged_summed_SUPP_triples %>% 
+  select(new_species_ID_detection, Internal_ID, sum)
+wide_relAbs_merged_summed_SUPP_triples_cluster_df <- melted_relAbs_merged_summed_SUPP_triples_cluster_df %>% pivot_wider(names_from = Internal_ID, values_from = sum)
+wide_relAbs_merged_summed_SUPP_triples_cluster_df <- na.omit(wide_relAbs_merged_summed_SUPP_triples_cluster_df)
+
+# Dissimilarity matrix
+df <- as.data.frame(wide_relAbs_merged_summed_SUPP_triples_cluster_df)
+df2 <- df[,-1]
+rownames(df2) <- df[,1]
+d <- dist(df2, method = "euclidean")
+# Hierarchical clustering using Complete Linkage
+hc1 <- hclust(d, method = "complete" )
+
+# plot dedrogram
+dhc <- as.dendrogram(hc1)
+# Rectangular lines
+ddata <- dendro_data(dhc, type = "rectangle")
+dend_plot <- ggplot(segment(ddata)) + 
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend), linewidth = 1) + 
+  coord_flip() + 
+  scale_y_reverse(expand = c(0.2, 0)) +
+  scale_x_reverse() +
+  theme_classic() +
+  theme(axis.ticks.y = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(0,0,0,0), "cm"))
+
+dend_plot
+# save dend plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/By_subject_ID/SUPP_triples_dendrogram.pdf",dend_plot, width = 5, height = 7)
+
+
+# reorder genomes for triples plot based on hclust
+genomes_order_triples_plot <- rev(hc1$labels[hc1$order])
+melted_relAbs_merged_summed_SUPP_triples$new_species_ID_detection <- factor(melted_relAbs_merged_summed_SUPP_triples$new_species_ID_detection, levels = genomes_order_triples_plot)
+
+# reorder subjects manually based on visual inspection
+Subject_level_order <- c("S019", "S039", "S005","S074", "S070", "S057", "S022", "S006", "S115", "S034", "S114","S077", "S066", "S098", "S078")
+
+# reorder subnjects based on list
+melted_relAbs_merged_summed_SUPP_triples$Subject_ID <- factor(melted_relAbs_merged_summed_SUPP_triples$Subject_ID, levels = Subject_level_order)
+
+# set pallet for plotting rel ab.
+paleta_new = brewer.pal(n = 11, name = "RdYlBu")
+
+triple_visit_SUPP_p <- ggplot(data = melted_relAbs_merged_summed_SUPP_triples, aes(x=Internal_ID, y=new_species_ID_detection, fill=sum)) + 
+  geom_tile(height=1, width=1, color = "black") + 
+  facet_grid(. ~ Subject_ID, scales = "free", space = "free", switch = "x") + 
+  scale_fill_gradientn(colours = paleta_new, limits=c(0, 100), breaks=seq(0,100,by=10),oob=squish) + 
+  scale_y_discrete(limits = levels(melted_relAbs_merged_summed_SUPP_triples$new_species_ID_detection)) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  guides(fill = guide_colourbar(barwidth = 1,
+                                barheight = 10,
+                                title = "%",
+                                ticks = TRUE,
+                                ticks.colour = "white",
+                                ticks.linewidth = 0.5)) +
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.background = element_rect(fill = "black"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm")) 
+
+
+
+triple_visit_SUPP_reads_mapped_p <- ggplot(data = melted_relAbs_merged_summed_SUPP_triples, aes(x=Internal_ID, y=total_reads_mapped)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "steelblue", fill = "steelblue") +
+  facet_grid(. ~ Subject_ID, scales = "free", space = "free", switch = "x") + 
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25000000), breaks=seq(0,25000000,by=25000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Mapped reads (0-25 million)") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "gray"),
+        strip.text.x = element_blank(),
+        plot.margin=unit(c(0,0,0.1,0), "cm"))
+
+triple_visit_SUPP_total_reads_p <- ggplot(data = melted_relAbs_merged_summed_SUPP_triples, aes(x=Internal_ID, y=QC_total_reads)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "steelblue", fill = "steelblue") +
+  facet_grid(. ~ Subject_ID, scales = "free", space = "free", switch = "x") + 
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 100000000), breaks=seq(0,100000000,by=100000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Total reads (0-100 million") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "gray"),
+        strip.text.x = element_blank(),
+        plot.margin=unit(c(1,0,0.1,0), "cm"))
+
+triple_visit_SUPP_percent_reads_mapped_p <- ggplot(data = melted_relAbs_merged_summed_SUPP_triples, aes(x=Internal_ID, y=percent_reads_mapped)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "steelblue", fill = "steelblue") +
+  facet_grid(. ~ Subject_ID, scales = "free", space = "free", switch = "x") + 
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25), breaks=seq(0,25,by=25), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Percent mapped reads (0-25%)") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "gray"),
+        strip.text.x = element_blank(),
+        plot.margin=unit(c(0,0,-0.001,0), "cm"))
+
+
+
+# combine total mapped reads plot and relab tile plot
+triple_visit_SUPP_final_p <- egg::ggarrange(triple_visit_SUPP_total_reads_p,
+                                       triple_visit_SUPP_reads_mapped_p,
+                                       triple_visit_SUPP_percent_reads_mapped_p,
+                                       triple_visit_SUPP_p,
+                                       ncol = 1,
+                                       heights = c(0.25,0.25,0.25,2))
+
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/NEW_VERSION_triple_visit_SUPP_relative_abundance.pdf", triple_visit_SUPP_final_p, width = 11, height = 6)
+
+```
+
+
+# relative abundance by subject with Metaphlan (triple visits)
+
+```{r}
+
+library(egg)
+library(grid)
+
+metaphlan_df <- read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/Metaphlan/Metaphlan_Haemophilus_Aggregatibacter_HMP_metagenomes_res.csv", header = TRUE)
+
+# melt wide to long
+metaphlan_df_melted <- reshape2::melt(metaphlan_df)
+
+# make oral site variable for facet grid
+metaphlan_df_melted <- metaphlan_df_melted %>% 
+  mutate(site = case_when(grepl('_TD', variable) ~ 'TD',
+                          grepl('_KG', variable) ~ 'KG', 
+                          grepl('_SUPP', variable) ~ 'SUPP',
+                          grepl('_SUBP', variable) ~ 'SUBP',
+                          grepl('_SV', variable) ~ 'SV',
+                          grepl('_TH', variable) ~ 'TH',
+                          grepl('_PT', variable) ~ 'PT',
+                          grepl('_HP', variable) ~ 'HP',
+                          grepl('_BM', variable) ~ 'BM',
+                          grepl('_PERIO', variable) ~ 'PERIO'))
+
+metaphlan_df_melted_SUPP <- metaphlan_df_melted %>% 
+  filter(site == "SUPP") %>% 
+  droplevels()
+
+# drop suffix from variable
+metaphlan_df_melted_SUPP$variable <- gsub("_.*","", metaphlan_df_melted_SUPP$variable)
+
+
+
+# load metadata for matching biosample ID to internal ID
+metaphlan_metadata <- read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/Metaphlan/686_bowtie2_metagenomes_metadata.csv", header = TRUE)
+
+# merge metaphlan results with metadata
+metaphlan_df_melted_SUPP_merged <- merge(metaphlan_df_melted_SUPP, metaphlan_metadata, by.x = "variable", by.y = "BioSample")
+
+
+# merge with metadata that contains visit info
+metadata <- read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/sequencing-metadata-count-QC.tsv", header=TRUE)
+metadata_subset <- metadata %>% 
+  select(BioSample, Subject_ID, Sample_time)
+
+metaphlan_df_melted_SUPP_merged <- merge(metaphlan_df_melted_SUPP_merged, metadata_subset, by.x = "variable", by.y = "BioSample")
+
+# Reorder facet_var based on a continuous variable
+metaphlan_df_melted_SUPP_merged$Subject_ID <- as.factor(metaphlan_df_melted_SUPP_merged$Subject_ID)
+metaphlan_df_melted_SUPP_merged$Subject_ID <- reorder(metaphlan_df_melted_SUPP_merged$Subject_ID, -metaphlan_df_melted_SUPP_merged$QC_total_reads)
+
+
+#
+metaphlan_df_melted_SUPP_merged$clade_name <- as.factor(metaphlan_df_melted_SUPP_merged$clade_name)
+
+
+metaphlan_df_melted_SUPP_merged_triples_list <- metaphlan_df_melted_SUPP_merged %>% 
+  group_by(Subject_ID) %>% 
+  summarise(n = n()/15) %>% 
+  filter(n == 3) %>% 
+  select(Subject_ID)
+
+# make data frames split by number of samples per subject
+metaphlan_df_melted_SUPP_merged_triples <- merge(metaphlan_df_melted_SUPP_merged, metaphlan_df_melted_SUPP_merged_triples_list, by = "Subject_ID")
+
+
+# cluster genomes based on euclidean distances and complete linkage
+metaphlan_df_melted_SUPP_merged_triples_cluster_df <- metaphlan_df_melted_SUPP_merged_triples %>% 
+  select(clade_name, Internal_ID, value)
+wide_metaphlan_df_melted_SUPP_merged_triples_cluster_df <- metaphlan_df_melted_SUPP_merged_triples_cluster_df %>% pivot_wider(names_from = Internal_ID, values_from = value)
+wide_metaphlan_df_melted_SUPP_merged_triples_cluster_df <- na.omit(wide_metaphlan_df_melted_SUPP_merged_triples_cluster_df)
+
+# Dissimilarity matrix
+df_metaphlan <- as.data.frame(wide_metaphlan_df_melted_SUPP_merged_triples_cluster_df)
+df_metaphlan2 <- df_metaphlan[,-1]
+rownames(df_metaphlan2) <- df_metaphlan[,1]
+d_metaphlan <- dist(df_metaphlan2, method = "euclidean")
+# Hierarchical clustering using Complete Linkage
+hc1_metaphlan <- hclust(d_metaphlan, method = "complete" )
+
+# plot dedrogram
+dhc_metaphlan <- as.dendrogram(hc1_metaphlan)
+# Rectangular lines
+ddata_metaphlan <- dendro_data(dhc_metaphlan, type = "rectangle")
+dend_plot_metaphlan <- ggplot(segment(ddata_metaphlan)) + 
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend), linewidth = 1) + 
+  coord_flip() + 
+  scale_y_reverse(expand = c(0.2, 0)) +
+  scale_x_reverse() +
+  theme_classic() +
+  theme(axis.ticks.y = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(0,0,0,0), "cm"))
+
+
+# save dend plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/By_subject_ID/metaphlan_SUPP_triples_dendrogram.pdf",dend_plot_metaphlan, width = 5, height = 7)
+
+
+
+# reorder genomes for triples plot based on hclust from metapangemnomics plot
+#metaphlan_order_triples_plot <- rev(hc1_metaphlan$labels[hc1_metaphlan$order]) # if we want to reorder based on hclust instead
+
+metaphlan_order_triples_plot <- c("Haemophilus_parahaemolyticus","Haemophilus_sp_HMSC71H05","Haemophilus_sp_C1","Haemophilus_aegyptius","Haemophilus_pittmaniae",
+                                  "Haemophilus_influenzae","Aggregatibacter_actinomycetemcomitans","Haemophilus_sputorum","Haemophilus_quentini","Haemophilus_paraphrohaemolyticus",
+                                  "Haemophilus_haemolyticus","Aggregatibacter_segnis","Aggregatibacter_sp_oral_taxon_458","Haemophilus_parainfluenzae","Aggregatibacter_aphrophilus")
+
+metaphlan_df_melted_SUPP_merged_triples$clade_name <- factor(metaphlan_df_melted_SUPP_merged_triples$clade_name, levels = metaphlan_order_triples_plot)
+
+
+# reorder subjects manually based on visual inspection
+Subject_level_order <- c("S019", "S039", "S005","S074", "S070", "S057", "S022", "S006", "S115", "S034", "S114","S077", "S066", "S098", "S078")
+
+
+# reorder subnjects based on list
+metaphlan_df_melted_SUPP_merged_triples$Subject_ID <- factor(metaphlan_df_melted_SUPP_merged_triples$Subject_ID, levels = Subject_level_order)
+
+# set pallet for plotting rel ab.
+paleta_new = brewer.pal(n = 11, name = "RdYlBu")
+
+# drop rows with NA
+metaphlan_df_melted_SUPP_merged_triples <- na.omit(metaphlan_df_melted_SUPP_merged_triples)
+
+metaphlan_triple_visit_SUPP_p <- ggplot(data = metaphlan_df_melted_SUPP_merged_triples, aes(x=Internal_ID, y=clade_name, fill=value)) + 
+  geom_tile(height=1, width=1, color = "black") + 
+  facet_grid(. ~ Subject_ID, scales = "free", space = "free", switch = "x") + 
+  scale_fill_gradientn(colours = paleta_new, limits=c(0, 10), breaks=seq(0,10,by=2),oob=squish) + 
+  scale_y_discrete(limits = levels(metaphlan_df_melted_SUPP_merged_triples$clade_name)) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  guides(fill = guide_colourbar(barwidth = 1,
+                                barheight = 10,
+                                title = "%",
+                                ticks = TRUE,
+                                ticks.colour = "white",
+                                ticks.linewidth = 0.5)) +
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.background = element_rect(fill = "black"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm")) 
+
+
+
+metaphlan_triple_visit_SUPP_total_reads_p <- ggplot(data = metaphlan_df_melted_SUPP_merged_triples, aes(x=Internal_ID, y=QC_total_reads)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "steelblue", fill = "steelblue") +
+  facet_grid(. ~ Subject_ID, scales = "free", space = "free", switch = "x") + 
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 100000000), breaks=seq(0,100000000,by=100000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Total reads (0-100 million)") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "gray"),
+        strip.text.x = element_blank(),
+        plot.margin=unit(c(0,0,-0.001,0), "cm"))
+
+
+
+
+
+# combine total mapped reads plot and relab tile plot
+metaphlan_triple_visit_SUPP_final_p <- egg::ggarrange(metaphlan_triple_visit_SUPP_total_reads_p,
+                                            metaphlan_triple_visit_SUPP_p,
+                                            ncol = 1,
+                                            heights = c(0.25,2))
+# save final supp singles plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/By_subject_ID/Metaphlan_SUPP_triples.pdf",metaphlan_triple_visit_SUPP_final_p, width = 12, height = 6)
+
+
+
+
+###### Lets merge the two data sets and make a single plot that focuses on H. para and A. aphrophilus
+
+metaphlan_subset <- metaphlan_df_melted_SUPP_merged_triples %>% 
+  select(Subject_ID, Internal_ID, Sample_time, variable, QC_total_reads, clade_name, value) %>% 
+  dplyr::rename("BioSample" = "variable") %>% 
+  filter(clade_name == "Aggregatibacter_aphrophilus" | clade_name == "Haemophilus_parainfluenzae") %>% 
+  mutate(dataset = "Metaphlan") %>% 
+  droplevels()
+
+
+bowtie_subset <- melted_relAbs_merged_summed_SUPP_triples %>% 
+  select(Subject_ID, Internal_ID, Sample_time, BioSample, QC_total_reads, new_species_ID_detection, sum) %>% 
+  dplyr::rename("value" = "sum",
+         "clade_name" = "new_species_ID_detection") %>% 
+  filter(clade_name == "A_aphrophilus" | clade_name == "H_parainfluenzae_group_SUPP") %>% 
+  mutate(dataset = "bowtie2") %>% 
+  droplevels()
+
+bowtie_subset <- bowtie_subset %>% 
+  mutate(clade_name = case_when(grepl('A_aphrophilus', clade_name) ~ 'Aggregatibacter_aphrophilus',
+                          grepl('H_parainfluenzae_group_SUPP', clade_name) ~ 'Haemophilus_parainfluenzae'))
+
+
+# scale values to between 0 and 10
+bowtie_subset$value <- scales::rescale(bowtie_subset$value, to = c(0, 10))   
+metaphlan_subset$value <- scales::rescale(metaphlan_subset$value, to = c(0, 10))   
+
+
+# merge data sets
+bowtie_subset_metaphlan_subset_combo <- rbind(bowtie_subset, metaphlan_subset)
+
+# reorder subject ID by QC total reads
+bowtie_subset_metaphlan_subset_combo$Subject_ID <- as.factor(bowtie_subset_metaphlan_subset_combo$Subject_ID)
+bowtie_subset_metaphlan_subset_combo$Subject_ID <- reorder(bowtie_subset_metaphlan_subset_combo$Subject_ID, -bowtie_subset_metaphlan_subset_combo$QC_total_reads)
+
+
+bowtie_subset_metaphlan_subset_combo_plot <- ggplot(data = bowtie_subset_metaphlan_subset_combo, aes(x=reorder(Internal_ID,-Sample_time), y=clade_name, fill=value)) + 
+  geom_tile(height=1, width=1, color = "black") + 
+  facet_grid(. ~ Subject_ID + dataset, scales = "free", space = "free", switch = "x") + 
+  scale_fill_gradientn(colours = paleta, limits=c(0, 10), breaks=seq(0,10,by=1),oob=squish) + 
+  scale_y_discrete(limits = levels(bowtie_subset_metaphlan_subset_combo$clade_name)) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  guides(fill = guide_colourbar(barwidth = 1,
+                                barheight = 10,
+                                title = "%",
+                                ticks = TRUE,
+                                ticks.colour = "white",
+                                ticks.linewidth = 0.5)) +
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "black")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_rect(colour = "black", fill = NA),
+        strip.text=element_text(size=12, colour = "black", angle = 90, vjust = 0.5, hjust=1)) + 
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm")) 
+
+
+COMBO_QC_total_reads_SUPP_triples_plot <- ggplot(data = bowtie_subset_metaphlan_subset_combo, aes(x=reorder(Internal_ID, -Sample_time), y=QC_total_reads)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "blue", fill = "blue") +
+  facet_grid(. ~ Subject_ID + dataset, scales = "free", space = "free", switch = "x") + 
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 100000000), breaks=seq(0,100000000,by=100000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Total reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(size = 1),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "white")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_blank(),
+        strip.text.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(1,1,-0.001,1), "cm"))
+
+
+# combine total mapped reads plot and relab tile plot
+COMBO_plot_final_SUPP_triples_plot <- egg::ggarrange(COMBO_QC_total_reads_SUPP_triples_plot, bowtie_subset_metaphlan_subset_combo_plot,
+                                                         ncol = 1,
+                                                         heights = c(0.25,2))
+
+# save final supp singles plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/By_subject_ID/COMBO_SUPP_triples_plot.pdf",COMBO_plot_final_SUPP_triples_plot, width = 12, height = 6)
+
+
+
+
+```
+
+# Spearman's Correlation metaphlan vs metapangenomics
+```{r}
+bowtie_subset_metaphlan_subset_combo.df <- as.data.frame(bowtie_subset_metaphlan_subset_combo)
+
+bowtie_subset_metaphlan_subset_combo_filtered_bowtie2 <- bowtie_subset_metaphlan_subset_combo.df %>% 
+  filter(dataset == "bowtie2")
+
+bowtie_subset_metaphlan_subset_combo_filtered_metaphlan <- bowtie_subset_metaphlan_subset_combo.df %>% 
+  filter(dataset == "Metaphlan")
+
+
+correlation_results_Sample_time_bowtie2 <- bowtie_subset_metaphlan_subset_combo_filtered_bowtie2 %>%
+  group_by(Sample_time) %>%
+  summarise(correlation = cor(value[clade_name == "Haemophilus_parainfluenzae"],
+                             value[clade_name == "Aggregatibacter_aphrophilus"],
+                             method = "spearman"))
+correlation_results_Sample_time_bowtie2 <- correlation_results_Sample_time_bowtie2 %>% 
+  mutate(Method = "Metapangenomics")
+
+correlation_results_Sample_time_metaphlan <- bowtie_subset_metaphlan_subset_combo_filtered_metaphlan %>%
+  group_by(Sample_time) %>%
+  summarise(correlation = cor(value[clade_name == "Haemophilus_parainfluenzae"],
+                             value[clade_name == "Aggregatibacter_aphrophilus"],
+                             method = "spearman"))
+correlation_results_Sample_time_metaphlan <- correlation_results_Sample_time_metaphlan %>% 
+  mutate(Method = "MetaPhlAn")
+
+
+# merge
+
+combo_cor_results <- rbind(correlation_results_Sample_time_bowtie2, correlation_results_Sample_time_metaphlan)
+
+write.csv(combo_cor_results, "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/Spearmans_pairwise_correlation/cor_results_Sample_time.csv", row.names = FALSE, quote = FALSE)
+```
+
+
+# Relative abundance first visit SUPP - metapangenomics mapping results
+
+```{r}
+
+# load relative abundance by species data set
+melted_relAbs_merged_summedn <- read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/13_DETECTED_GENOMES/P_0622_Haemophilus_Aggregatibacter-SPECIES-LEVEL-relative_abundance_Q2Q3_detected_only.csv", header = TRUE)
+
+melted_relAbs_merged_summed_SUPP <- melted_relAbs_merged_summedn %>% 
+  dplyr::filter(site == "SUPP")
+
+# filter by visit 
+melted_relAbs_merged_summed_SUPP_visit_1 <- melted_relAbs_merged_summed_SUPP %>% 
+  filter(Sample_time == 1)
+
+# get number of samples # 103 samples
+melted_relAbs_merged_summed_SUPP_visit_1 %>% 
+  group_by(BioSample) %>% 
+  summarise(count=n())
+  
+
+# subset data frame 
+relAbs_SUPP_visit_1_cluster_df <- melted_relAbs_merged_summed_SUPP_visit_1 %>% 
+  select(new_species_ID_detection, Internal_ID, sum)
+
+# pivot wider
+wide_relAbs_SUPP_visit_1_cluster_df <- relAbs_SUPP_visit_1_cluster_df %>% pivot_wider(names_from = Internal_ID, values_from = sum)
+
+# make tibble into data frame object
+wide_relAbs_SUPP_visit_1_cluster_df <- as.data.frame(wide_relAbs_SUPP_visit_1_cluster_df)
+
+# rename row names to species IDs
+wide_relAbs_SUPP_visit_1_cluster_df2 <- wide_relAbs_SUPP_visit_1_cluster_df[,-1]
+rownames(wide_relAbs_SUPP_visit_1_cluster_df2) <- wide_relAbs_SUPP_visit_1_cluster_df[,1]
+
+# add rows of zeroes for undetected species
+A_actinomycetecomitans <- t(data.frame("A_actinomycetecomitans" = seq(from = 0,to = 0, length.out = (ncol(wide_relAbs_SUPP_visit_1_cluster_df)) - 1)))
+colnames(A_actinomycetecomitans) <- colnames(wide_relAbs_SUPP_visit_1_cluster_df2)
+
+H_massiliensis <- t(data.frame("H_massiliensis" = seq(from = 0,to = 0, length.out = (ncol(wide_relAbs_SUPP_visit_1_cluster_df)) - 1)))
+colnames(H_massiliensis) <- colnames(wide_relAbs_SUPP_visit_1_cluster_df2)
+
+H_ducreyi <- t(data.frame("H_ducreyi" = seq(from = 0,to = 0, length.out = (ncol(wide_relAbs_SUPP_visit_1_cluster_df)) - 1)))
+colnames(H_ducreyi) <- colnames(wide_relAbs_SUPP_visit_1_cluster_df2)
+
+H_aegyptius <- t(data.frame("H_aegyptius" = seq(from = 0,to = 0, length.out = (ncol(wide_relAbs_SUPP_visit_1_cluster_df)) - 1)))
+colnames(H_aegyptius) <- colnames(wide_relAbs_SUPP_visit_1_cluster_df2)
+  
+wide_relAbs_SUPP_visit_1_cluster_df2 <- rbind(wide_relAbs_SUPP_visit_1_cluster_df2, A_actinomycetecomitans, H_massiliensis, H_ducreyi, H_aegyptius)  
+
+#cluster genomes based on euclidean distances and complete linkage
+# Dissimilarity matrix
+dist_visit_1 <- dist(wide_relAbs_SUPP_visit_1_cluster_df2, method = "euclidean")
+# Hierarchical clustering using Complete Linkage
+hc1_visit_1 <- hclust(dist_visit_1, method = "complete" )
+
+# plot dedrogram
+dhc_visit_1 <- as.dendrogram(hc1_visit_1)
+# Rectangular lines
+ddata_visit_1 <- dendro_data(dhc_visit_1, type = "rectangle")
+dend_plot_visit_1 <- ggplot(segment(ddata_visit_1)) + 
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend), linewidth = 1) + 
+  coord_flip() + 
+  scale_y_reverse(expand = c(0.2, 0)) +
+  scale_x_reverse() +
+  theme_classic() +
+  theme(axis.ticks.y = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(0,0,0,0), "cm"))
+
+
+# save dend plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/visit_1_SUPP_dendrogram_no_hpara_groups.pdf",dend_plot_visit_1, width = 5, height = 7)
+
+
+# reorder genomes for triples plot based on hclust
+visit_1_species_order <- rev(hc1_visit_1$labels[hc1_visit_1$order])
+
+melted_relAbs_merged_summed_SUPP_visit_1$new_species_ID_detection <- factor(melted_relAbs_merged_summed_SUPP_visit_1$new_species_ID_detection, levels = visit_1_species_order)
+
+# transpose data frame so that we can cluster samples based on euclidan distance and complete linkage
+trans_wide_relAbs_SUPP_visit_1_cluster_df2 <- t(wide_relAbs_SUPP_visit_1_cluster_df2)
+
+# sample euclidean distance 
+dist_visit_1_samples <- dist(trans_wide_relAbs_SUPP_visit_1_cluster_df2, method = "euclidean")
+# Hierarchical clustering using Complete Linkage
+hc1_visit_1_samples <- hclust(dist_visit_1_samples, method = "complete" )
+
+# plot dedrogram
+dhc_visit_1_samples <- as.dendrogram(hc1_visit_1_samples)
+# Rectangular lines
+ddata_visit_1_samples <- dendro_data(dhc_visit_1_samples, type = "rectangle")
+dend_plot_visit_1_samples<- ggplot(segment(ddata_visit_1_samples)) + 
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend), linewidth = 1) + 
+  #coord_flip() + 
+  #scale_y_reverse(expand = c(0.2, 0)) +
+  scale_x_reverse() +
+  theme_classic() +
+  theme(axis.ticks.y = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(0,0,0,0), "cm"))
+
+
+# save dend plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/visit_1_SUPP_samples_dendrogram_no_hpara_groups.pdf",dend_plot_visit_1_samples, width = 5, height = 7)
+
+
+# reorder samples based on hclust
+visit_1_samples_order <- rev(hc1_visit_1_samples$labels[hc1_visit_1_samples$order])
+melted_relAbs_merged_summed_SUPP_visit_1$Internal_ID <- factor(melted_relAbs_merged_summed_SUPP_visit_1$Internal_ID, levels = visit_1_samples_order)
+
+
+# set colors for heatmap
+paleta_new = rev(brewer.pal(n = 11, name = "RdYlBu"))
+
+# set dodge for plots
+dodge <- position_dodge(width=0.9)
+
+# plot 1
+visit_1_SUPP_p <- ggplot(data = melted_relAbs_merged_summed_SUPP_visit_1, aes(x=Internal_ID, y=new_species_ID_detection, fill=sum)) + 
+  geom_tile(height=1, width=1, color = "black") + 
+  scale_fill_gradientn(colours = paleta_new, limits=c(0, 100), breaks=seq(0,100,by=10),oob=squish) + 
+  scale_y_discrete(limits = levels(melted_relAbs_merged_summed_SUPP_visit_1$new_species_ID_detection)) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  guides(fill = guide_colourbar(barwidth = 1,
+                                barheight = 10,
+                                title = "%",
+                                ticks = TRUE,
+                                ticks.colour = "white",
+                                ticks.linewidth = 0.5)) +
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.background = element_rect(fill = "black"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm")) 
+
+
+
+visit_1_SUPP_reads_mapped_p <- ggplot(data = melted_relAbs_merged_summed_SUPP_visit_1, aes(x=Internal_ID, y=total_reads_mapped)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "blue", fill = "blue") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25000000), breaks=seq(0,25000000,by=25000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Mapped reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "gray"),
+        plot.margin=unit(c(0,0,0.1,0), "cm"))
+
+visit_1_SUPP_total_reads_p <- ggplot(data = melted_relAbs_merged_summed_SUPP_visit_1, aes(x=Internal_ID, y=QC_total_reads)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "blue", fill = "blue") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 100000000), breaks=seq(0,100000000,by=100000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Total reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "gray"),
+        plot.margin=unit(c(1,0,0.1,0), "cm"))
+
+visit_1_SUPP_percent_reads_mapped_p <- ggplot(data = melted_relAbs_merged_summed_SUPP_visit_1, aes(x=Internal_ID, y=percent_reads_mapped)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "blue", fill = "blue") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25), breaks=seq(0,25,by=25), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Percent mapped reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "gray"),
+        plot.margin=unit(c(0,0,-0.001,0), "cm"))
+
+
+
+# combine total mapped reads plot and relab tile plot
+visit_1_SUPP_final_p <- egg::ggarrange(visit_1_SUPP_total_reads_p,
+                                       visit_1_SUPP_reads_mapped_p,
+                                       visit_1_SUPP_percent_reads_mapped_p,
+                                       visit_1_SUPP_p,
+                                                         ncol = 1,
+                                                         heights = c(0.25,0.25,0.25,2))
+
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/NEW_VERSION_visit_1_SUPP_relative_abundance_new_colors.pdf", visit_1_SUPP_final_p, width = 8, height = 6)
+
+
+```
+
+
+# Relative abundance first visit SUPP (un-grouped H. para)
+
+```{r}
+
+# make new variables
+SUPP_visit_1_rel_ab_ungrouped_Hpara <- melted_relAbs_merged_summed_SUPP_visit_1 %>% 
+  mutate(species_ungrouped = new_species_ID_detection) %>% 
+  select(species_ungrouped, Internal_ID, sum, total_reads_mapped, QC_total_reads, percent_reads_mapped)
+
+# use forcats fct_collapse functions to collapse relative abundance values for select levels of a factor
+SUPP_visit_1_rel_ab_ungrouped_Hpara$species_ungrouped <- fct_collapse(SUPP_visit_1_rel_ab_ungrouped_Hpara$species_ungrouped, H_parainfluenzae = c("H_parainfluenzae_group_SUPP","H_parainfluenzae_group_KG","H_parainfluenzae_group_TD","H_parainfluenzae_group_IV","H_parainfluenzae_group_V"))
+                                       
+# 
+SUPP_visit_1_rel_ab_ungrouped_Hpara_2 <- SUPP_visit_1_rel_ab_ungrouped_Hpara %>%
+  group_by(species_ungrouped, Internal_ID) %>%
+  summarise(sum = ifelse(species_ungrouped == "H_parainfluenzae", sum(sum), sum),
+            total_reads_mapped = first(total_reads_mapped),
+            QC_total_reads = first(QC_total_reads),
+            percent_reads_mapped = first(percent_reads_mapped)) %>%
+  ungroup() %>%
+  distinct()
+
+# pivot wider for adding missing species and clustering
+wide__ungrouped_Hpara_SUPP_visit_1_cluster_df <-  SUPP_visit_1_rel_ab_ungrouped_Hpara_2 %>% 
+  select(species_ungrouped, Internal_ID, sum) %>% 
+  pivot_wider(names_from = Internal_ID, values_from = sum)
+
+# make tibble into data frame object
+wide__ungrouped_Hpara_SUPP_visit_1_cluster_df <- as.data.frame(wide__ungrouped_Hpara_SUPP_visit_1_cluster_df)
+
+# rename row names to species IDs
+wide__ungrouped_Hpara_SUPP_visit_1_cluster_d2 <- wide__ungrouped_Hpara_SUPP_visit_1_cluster_df[,-1]
+rownames(wide__ungrouped_Hpara_SUPP_visit_1_cluster_d2) <- wide__ungrouped_Hpara_SUPP_visit_1_cluster_df[,1]
+
+# add rows of zeroes for undetected species
+# A_actinomycetecomitans
+# H_massiliensis
+# H_ducreyi
+# H. aegyptius
+A_actinomycetecomitans <- t(data.frame("A_actinomycetecomitans" = seq(from = 0,to = 0, length.out = (ncol(wide_relAbs_SUPP_visit_1_cluster_df)) - 1)))
+colnames(A_actinomycetecomitans) <- colnames(wide__ungrouped_Hpara_SUPP_visit_1_cluster_d2)
+
+H_massiliensis <- t(data.frame("H_massiliensis" = seq(from = 0,to = 0, length.out = (ncol(wide_relAbs_SUPP_visit_1_cluster_df)) - 1)))
+colnames(H_massiliensis) <- colnames(wide__ungrouped_Hpara_SUPP_visit_1_cluster_d2)
+
+H_ducreyi <- t(data.frame("H_ducreyi" = seq(from = 0,to = 0, length.out = (ncol(wide_relAbs_SUPP_visit_1_cluster_df)) - 1)))
+colnames(H_ducreyi) <- colnames(wide__ungrouped_Hpara_SUPP_visit_1_cluster_d2)
+
+H_aegyptius <- t(data.frame("H_aegyptius" = seq(from = 0,to = 0, length.out = (ncol(wide_relAbs_SUPP_visit_1_cluster_df)) - 1)))
+colnames(H_aegyptius) <- colnames(wide__ungrouped_Hpara_SUPP_visit_1_cluster_d2)
+
+wide__ungrouped_Hpara_SUPP_visit_1_cluster_d2 <- rbind(wide__ungrouped_Hpara_SUPP_visit_1_cluster_d2, A_actinomycetecomitans, H_massiliensis, H_ducreyi, H_aegyptius)  
+
+
+# Dissimilarity matrix
+dist_visit_1 <- dist(wide__ungrouped_Hpara_SUPP_visit_1_cluster_d2, method = "euclidean")
+# Hierarchical clustering using Complete Linkage
+hc1_visit_1 <- hclust(dist_visit_1, method = "complete" )
+
+# plot dedrogram
+dhc_visit_1 <- as.dendrogram(hc1_visit_1)
+# Rectangular lines
+ddata_visit_1 <- dendro_data(dhc_visit_1, type = "rectangle")
+dend_plot_visit_1 <- ggplot(segment(ddata_visit_1)) + 
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend), linewidth = 1) + 
+  coord_flip() + 
+  scale_y_reverse(expand = c(0.2, 0)) +
+  scale_x_reverse() +
+  theme_classic() +
+  theme(axis.ticks.y = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(0,0,0,0), "cm"))
+
+
+# save dend plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/visit_1_SUPP_ungrouped_hpara_species_dendrogram.pdf",dend_plot_visit_1, width = 5, height = 7)
+
+
+# reorder genomes for triples plot based on hclust
+visit_1_species_order <- rev(hc1_visit_1$labels[hc1_visit_1$order])
+SUPP_visit_1_rel_ab_ungrouped_Hpara_2$species_ungrouped <- factor(SUPP_visit_1_rel_ab_ungrouped_Hpara_2$species_ungrouped, levels = visit_1_species_order)
+
+
+# transpose data frame so that we can cluster samples based on euclidan distance and complete linkage
+trans_wide__ungrouped_Hpara_SUPP_visit_1_cluster_df <- t(wide__ungrouped_Hpara_SUPP_visit_1_cluster_df)
+
+# make top row the colnames
+trans_wide__ungrouped_Hpara_SUPP_visit_1_cluster_df <- trans_wide__ungrouped_Hpara_SUPP_visit_1_cluster_df %>% janitor::row_to_names(1)
+
+# sample euclidean distance 
+ungrouped_Hpara_dist_visit_1_samples <- dist(trans_wide__ungrouped_Hpara_SUPP_visit_1_cluster_df, method = "euclidean")
+
+# Hierarchical clustering using Complete Linkage
+ungrouped_Hpara_hc1_visit_1_samples <- hclust(ungrouped_Hpara_dist_visit_1_samples, method = "complete" )
+
+# plot dedrogram
+ungrouped_Hpara_dhc_visit_1_samples <- as.dendrogram(ungrouped_Hpara_hc1_visit_1_samples)
+
+# Rectangular lines
+ungrouped_Hpara_ddata_visit_1_samples <- dendro_data(ungrouped_Hpara_dhc_visit_1_samples, type = "rectangle")
+
+ungrouped_Hpara_dend_plot_visit_1_samples<- ggplot(segment(ungrouped_Hpara_ddata_visit_1_samples)) + 
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend), linewidth = 1) + 
+  #coord_flip() + 
+  #scale_y_reverse(expand = c(0.2, 0)) +
+  scale_x_reverse() +
+  theme_classic() +
+  theme(axis.ticks.y = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(0,0,0,0), "cm"))
+
+
+# save dend plot
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/visit_1_SUPP_samples_dendrogram_no_hpara_groups.pdf",ungrouped_Hpara_dend_plot_visit_1_samples, width = 8, height = 4)
+
+
+# reorder samples based on hclust
+ungrouped_Hpara_visit_1_samples_order <- rev(ungrouped_Hpara_hc1_visit_1_samples$labels[ungrouped_Hpara_hc1_visit_1_samples$order])
+SUPP_visit_1_rel_ab_ungrouped_Hpara_2$Internal_ID <- factor(SUPP_visit_1_rel_ab_ungrouped_Hpara_2$Internal_ID, levels = ungrouped_Hpara_visit_1_samples_order)
+
+# set colors for heatmap
+paleta_new = rev(brewer.pal(n = 11, name = "RdYlBu"))
+
+# plot 1
+ungrouped_hpara_visit_1_SUPP_p <- ggplot(data = SUPP_visit_1_rel_ab_ungrouped_Hpara_2, aes(x=Internal_ID, y=species_ungrouped, fill=sum)) + 
+  geom_tile(height=1, width=1, color = "black") + 
+  scale_fill_gradientn(colours = paleta_new, limits=c(0, 100), breaks=seq(0,100,by=10),oob=squish) + 
+  scale_y_discrete(limits = levels(SUPP_visit_1_rel_ab_ungrouped_Hpara_2$species_ungrouped)) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  guides(fill = guide_colourbar(barwidth = 1,
+                                barheight = 10,
+                                title = "%",
+                                ticks = TRUE,
+                                ticks.colour = "white",
+                                ticks.linewidth = 0.5)) +
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.background = element_rect(fill = "black"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm")) 
+
+
+
+ungrouped_hpara_visit_1_SUPP_reads_mapped_p <- ggplot(data = SUPP_visit_1_rel_ab_ungrouped_Hpara_2, aes(x=Internal_ID, y=total_reads_mapped)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "blue", fill = "blue") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25000000), breaks=seq(0,25000000,by=25000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Mapped reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "gray"),
+        plot.margin=unit(c(0,0,0.1,0), "cm"))
+
+ungrouped_hpara_visit_1_SUPP_total_reads_p <- ggplot(data = SUPP_visit_1_rel_ab_ungrouped_Hpara_2, aes(x=Internal_ID, y=QC_total_reads)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "blue", fill = "blue") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 100000000), breaks=seq(0,100000000,by=100000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Total reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "gray"),
+        plot.margin=unit(c(1,0,0.1,0), "cm"))
+
+ungrouped_hpara_visit_1_SUPP_percent_reads_mapped_p <- ggplot(data = SUPP_visit_1_rel_ab_ungrouped_Hpara_2, aes(x=Internal_ID, y=percent_reads_mapped)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "blue", fill = "blue") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 25), breaks=seq(0,25,by=25), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Percent mapped reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "gray"),
+        plot.margin=unit(c(0,0,-0.001,0), "cm"))
+
+
+
+# combine total mapped reads plot and relab tile plot
+ungrouped_hpara_visit_1_SUPP_final_p <- egg::ggarrange(ungrouped_hpara_visit_1_SUPP_total_reads_p,
+                                       ungrouped_hpara_visit_1_SUPP_reads_mapped_p,
+                                       ungrouped_hpara_visit_1_SUPP_percent_reads_mapped_p,
+                                       ungrouped_hpara_visit_1_SUPP_p,
+                                                         ncol = 1,
+                                                         heights = c(0.25,0.25,0.25,2))
+
+
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/NEW_VERSION_ungrouped_hpara_visit_1_SUPP_relative_abundance_new_colors.pdf", ungrouped_hpara_visit_1_SUPP_final_p, width = 8, height = 6)
+
+
+```
+
+# Metaphlan relative abundance first visit SUPP 
+
+```{r}
+
+metaphlan_df <- read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/Metaphlan/Metaphlan_Haemophilus_Aggregatibacter_HMP_metagenomes_res.csv", header = TRUE)
+
+# melt wide to long
+metaphlan_df_melted <- reshape2::melt(metaphlan_df)
+
+# make oral site variable for facet grid
+metaphlan_df_melted <- metaphlan_df_melted %>% 
+  mutate(site = case_when(grepl('_TD', variable) ~ 'TD',
+                          grepl('_KG', variable) ~ 'KG', 
+                          grepl('_SUPP', variable) ~ 'SUPP',
+                          grepl('_SUBP', variable) ~ 'SUBP',
+                          grepl('_SV', variable) ~ 'SV',
+                          grepl('_TH', variable) ~ 'TH',
+                          grepl('_PT', variable) ~ 'PT',
+                          grepl('_HP', variable) ~ 'HP',
+                          grepl('_BM', variable) ~ 'BM',
+                          grepl('_PERIO', variable) ~ 'PERIO'))
+
+metaphlan_df_melted_SUPP <- metaphlan_df_melted %>% 
+  filter(site == "SUPP") %>% 
+  droplevels()
+
+# drop suffix from variable
+metaphlan_df_melted_SUPP$variable <- gsub("_.*","", metaphlan_df_melted_SUPP$variable)
+
+
+# load metadata for matching biosample ID to internal ID
+metaphlan_metadata <- read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/Metaphlan/686_bowtie2_metagenomes_metadata.csv", header = TRUE)
+
+# merge metaphlan results with metadata
+metaphlan_df_melted_SUPP_merged <- merge(metaphlan_df_melted_SUPP, metaphlan_metadata, by.x = "variable", by.y = "BioSample")
+
+# merge with metadata that contains visit info
+metadata <- read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/sequencing-metadata-count-QC.tsv", header=TRUE)
+
+metadata_subset <- metadata %>% 
+  select(BioSample, Subject_ID, Sample_time)
+
+metaphlan_df_melted_SUPP_merged <- merge(metaphlan_df_melted_SUPP_merged, metadata_subset, by.x = "variable", by.y = "BioSample")
+
+# filter by visit 
+metaphlan_df_melted_SUPP_merged_visit_1 <- metaphlan_df_melted_SUPP_merged %>% 
+  filter(Sample_time == 1)
+
+
+#### merge with metapangenomics mapping results to get same samples
+# Load mapping data into R
+mapping <- read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/P_0622_Haemophilus_Aggregatibacter-mapping_stats_new_metadata_merged.csv", header=TRUE)
+
+# Merge metaphlan abundance df with mapping df
+metaphlan_df_melted_SUPP_merged_visit_1 <- merge(metaphlan_df_melted_SUPP_merged_visit_1, mapping, by = "Internal_ID")
+
+
+# reorder samples based on hclust results from metapangemnomics (ungrouped_hpara)
+metaphlan_df_melted_SUPP_merged_visit_1 <- metaphlan_df_melted_SUPP_merged_visit_1 %>%
+  filter(Internal_ID %in% ungrouped_Hpara_visit_1_samples_order)
+
+metaphlan_df_melted_SUPP_merged_visit_1$Internal_ID <- factor(metaphlan_df_melted_SUPP_merged_visit_1$Internal_ID, levels = ungrouped_Hpara_visit_1_samples_order)
+
+# reorder genomes for triples plot based on hclust from metapangemnomics
+metaphlan_visit_1_species_order = c("Haemophilus_influenzae","Haemophilus_pittmaniae","Haemophilus_quentini","Haemophilus_sputorum",
+                                    "Aggregatibacter_actinomycetemcomitans","Haemophilus_aegyptius","Haemophilus_haemolyticus",
+                                    "Haemophilus_parahaemolyticus","Haemophilus_sp_C1","Haemophilus_paraphrohaemolyticus","Haemophilus_sp_HMSC71H05","Aggregatibacter_segnis",
+                                    "Aggregatibacter_aphrophilus", "Aggregatibacter_sp_oral_taxon_458","Haemophilus_parainfluenzae")
+
+metaphlan_df_melted_SUPP_merged_visit_1$clade_name <- factor(metaphlan_df_melted_SUPP_merged_visit_1$clade_name, levels = metaphlan_visit_1_species_order)
+
+# set colors for heat map
+paleta_new = rev(brewer.pal(n = 11, name = "RdYlBu"))
+
+# plot 1
+visit_1_metaphlan_SUPP_p <- ggplot(data = metaphlan_df_melted_SUPP_merged_visit_1, aes(x=Internal_ID, y=clade_name, fill=value)) + 
+  geom_tile(height=1, width=1, color = "black") + 
+  scale_fill_gradientn(colours = paleta_new, limits=c(0, 5), breaks=seq(0,5,by=1),oob=squish) + 
+  scale_y_discrete(limits = levels(metaphlan_df_melted_SUPP_merged_visit_1$clade_name)) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  guides(fill = guide_colourbar(barwidth = 1,
+                                barheight = 10,
+                                title = "%",
+                                ticks = TRUE,
+                                ticks.colour = "white",
+                                ticks.linewidth = 0.5)) +
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.background = element_rect(fill = "black"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm")) 
+
+
+# plot 2
+dodge <- position_dodge(width=0.9)
+
+visit_1_metaphlan_SUPP_total_reads_p <- ggplot(data = metaphlan_df_melted_SUPP_merged_visit_1, aes(x=Internal_ID, y=QC_total_reads.y)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "steelblue", fill = "steelblue") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 100000000), breaks=seq(0,100000000,by=100000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Total reads (0-100 million)") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y =  element_blank(),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y = element_text(angle = 0, vjust = 0.5),
+        panel.background = element_rect(fill = "gray"),
+        plot.margin=unit(c(1,1,-0.001,1), "cm"))
+
+# combine total mapped reads plot and relab tile plot
+visit_1_metaphlan_SUPP_final_p <- egg::ggarrange(visit_1_metaphlan_SUPP_total_reads_p, visit_1_metaphlan_SUPP_p,
+                                       ncol = 1,
+                                       heights = c(0.25,2))
+
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/RelAbs/metaphlan/visit_1_SUPP_metaphlan_relative_abundance.pdf", visit_1_metaphlan_SUPP_final_p, width = 8, height = 6)
+
+
+```
+
+# Find mapping detection threshold 
+```{r}
+mapping_metadata_merged <- read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/P_0622_Haemophilus_Aggregatibacter-mapping_stats_new_metadata_merged.csv", header=TRUE)
+
+# change the one sample with NaN for percent_reads_mapped to zero
+mapping_metadata_merged$percent_reads_mapped[is.na(mapping_metadata_merged$percent_reads_mapped)] <- 0
+
+# make sample size (Mb) and detection threshold variablea
+mapping_metadata_merged <- mapping_metadata_merged %>% 
+  mutate(sample_size_nt = QC_total_reads * 100) %>% 
+  mutate(percent_rel_ab_for_mapping_detection = (1000000/sample_size_nt)*100) %>% 
+  mutate(percent_rel_ab_for_mapping_detection_10X = (1000000/(sample_size_nt/10))*100)
+
+# change the one sample with inf detection threshold to zero
+mapping_metadata_merged$percent_rel_ab_for_mapping_detection[is.infinite(mapping_metadata_merged$percent_rel_ab_for_mapping_detection)] <- 0
+mapping_metadata_merged$percent_rel_ab_for_mapping_detection_10X[is.infinite(mapping_metadata_merged$percent_rel_ab_for_mapping_detection_10X)] <- 0
+
+
+write.csv(mapping_metadata_merged,"/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/P_0622_Haemophilus_Aggregatibacter-mapping_stats_new_metadata_merged.csv", row.names = FALSE, quote = FALSE)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+# H. Para relative abundance ordered by ANI
+
+```{r}
+
+
+H_parainfluenzae_TD_group = c("H_parainfluenzae_str_M1C137_2_id_GCA_014931395_1", "H_parainfluenzae_str_M1C149_1_id_GCA_014931315_1", "H_parainfluenzae_str_T3T1_id_GCA_000210895_1", "H_parainfluenzae_str_M1C146_1_id_GCA_014931355_1", "H_sp_str_HMSC066D03_id_GCA_001811025_1", "H_parainfluenzae_str_M1C113_1_id_GCA_014931475_1", "H_parainfluenzae_str_C2004000280_id_GCA_003252725_1", "H_parainfluenzae_str_M1C111_2_id_GCA_014982385_1", "H_sp_str_HMSC71H05_id_GCA_001838635_1", "H_parainfluenzae_str_209_HPAR_id_GCA_001055885_1", "H_parainfluenzae_str_C2004002729_id_GCA_003252795_1", "H_parainfluenzae_str_M1C147_1_id_GCA_014931335_1", "H_parainfluenzae_str_M1C130_2_id_GCA_014931415_1", "H_parainfluenzae_str_M1C125_4_id_GCA_014931435_1", "H_parainfluenzae_str_M1C120_2_id_GCA_014931455_1", "H_parainfluenzae_str_146_HPAR_id_GCA_001053575_1", "H_sp_str_HMSC068C11_id_GCA_001815355_1", "H_parainfluenzae_str_432_HPAR_id_GCA_001055095_1", "H_parainfluenzae_str_901_HPAR_id_GCA_001059815_1", "H_sp_str_HMSC061E01_id_GCA_001810345_1", "H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1", "H_parainfluenzae_str_C2008001710_id_GCA_003252775_1", "H_sp_str_CCUG_60358_id_GCA_001679485_1", "H_parainfluenzae_str_M1C152_1_id_GCA_014931295_1", "H_parainfluenzae_str_M1C160_1_id_GCA_014931275_1")
+
+
+H_parainfluenzae_SUPP_group = c("H_parainfluenzae_str_137_HINF_id_GCA_001053535_1",
+"H_parainfluenzae_str_CCUG_58848_id_GCA_001679405_1",
+"H_parainfluenzae_str_488_HPAR_id_GCA_001057005_1",
+"H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1",
+"H_parainfluenzae_str_UMB0748_id_GCA_002884755_1",
+"H_sp_str_HMSC61B11_id_GCA_001838615_1",
+"H_parainfluenzae_str_HK262_id_GCA_000259485_1")
+
+melted_df_detect_5 <- melted_strain_detection %>% 
+  mutate(groupID = case_when(bins %in% H_parainfluenzae_TD_group ~ "H. parainfluenzae group TD",
+                             bins %in% H_parainfluenzae_SUPP_group ~ "H. parainfluenzae group SUPP")) %>% 
+  drop_na(groupID) %>% 
+  droplevels() %>% 
+  dplyr::filter(site == "SUPP" | site == "TD" | site == "BM")
+
+# re-order by ANI
+mylevels2 <- c("H_parainfluenzae_str_M1C137_2_id_GCA_014931395_1", "H_parainfluenzae_str_M1C149_1_id_GCA_014931315_1", "H_parainfluenzae_str_T3T1_id_GCA_000210895_1", "H_parainfluenzae_str_M1C146_1_id_GCA_014931355_1", "H_sp_str_HMSC066D03_id_GCA_001811025_1", "H_parainfluenzae_str_M1C113_1_id_GCA_014931475_1", "H_parainfluenzae_str_C2004000280_id_GCA_003252725_1", "H_parainfluenzae_str_M1C111_2_id_GCA_014982385_1", "H_sp_str_HMSC71H05_id_GCA_001838635_1", "H_parainfluenzae_str_209_HPAR_id_GCA_001055885_1", "H_parainfluenzae_str_C2004002729_id_GCA_003252795_1", "H_parainfluenzae_str_M1C147_1_id_GCA_014931335_1", "H_parainfluenzae_str_M1C130_2_id_GCA_014931415_1", "H_parainfluenzae_str_M1C125_4_id_GCA_014931435_1", "H_parainfluenzae_str_M1C120_2_id_GCA_014931455_1", "H_parainfluenzae_str_146_HPAR_id_GCA_001053575_1", "H_sp_str_HMSC068C11_id_GCA_001815355_1", "H_parainfluenzae_str_432_HPAR_id_GCA_001055095_1", "H_parainfluenzae_str_901_HPAR_id_GCA_001059815_1", "H_sp_str_HMSC061E01_id_GCA_001810345_1", "H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1", "H_parainfluenzae_str_C2008001710_id_GCA_003252775_1", "H_sp_str_CCUG_60358_id_GCA_001679485_1", "H_parainfluenzae_str_M1C152_1_id_GCA_014931295_1", "H_parainfluenzae_str_M1C160_1_id_GCA_014931275_1","H_parainfluenzae_str_137_HINF_id_GCA_001053535_1","H_parainfluenzae_str_CCUG_58848_id_GCA_001679405_1","H_parainfluenzae_str_488_HPAR_id_GCA_001057005_1","H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1","H_parainfluenzae_str_UMB0748_id_GCA_002884755_1","H_sp_str_HMSC61B11_id_GCA_001838615_1","H_parainfluenzae_str_HK262_id_GCA_000259485_1")
+mylevels2 <-gsub("H_parainfluenzae_str_","", mylevels2)
+mylevels2 <-gsub("_id_GCA_.*","", mylevels2)
+
+melted_df_detect_5$bins <-gsub("H_parainfluenzae_str_","", melted_df_detect_5$bins)
+melted_df_detect_5$bins <-gsub("_id_GCA_.*","", melted_df_detect_5$bins)
+melted_df_detect_5$bins <- factor(melted_df_detect_5$bins, levels = mylevels2)
+
+plot_strain_level_detection_3 <- ggplot(data = melted_df_detect_5, aes(x=reorder(Internal_ID,-QC_total_reads), y=bins, fill=detection_binary)) +
+  geom_tile(height=1, width=1) + 
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x") + 
+  scale_fill_manual(values = c("black", "cyan")) +
+  scale_y_discrete(limits = rev(levels(melted_df_detect_5$bins))) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  theme_classic() + 
+  theme_classic() + 
+  theme(text = element_text(size = 12),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "black")) + 
+  theme(strip.background = element_blank(),
+        panel.border = element_rect(colour = "black", fill = NA),
+        strip.text=element_text(size=12)) + 
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(-0.001,1,1,1), "cm"))
+
+
+dodge <- position_dodge(width=0.9)
+plot_total_reads_detection_3 <- ggplot(data = melted_df_detect_5, aes(x=reorder(Internal_ID, -QC_total_reads), y=QC_total_reads)) + 
+  geom_bar(stat = 'identity',position = dodge, color = "blue") +
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 100000000), breaks=seq(0,100000000,by=100000000), oob=squish, labels = scales::comma) +
+  #coord_cartesian(ylim=c(0,100000000)) +
+  xlab(NULL)+
+  ylab("Total reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(size = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "white")) + 
+  theme(strip.background = element_blank(),
+        #panel.border = element_rect(colour = "white", fill = NA),
+        panel.border = element_blank(),
+        strip.text.x = element_blank()) +
+  theme(panel.spacing.x=unit(0.05, "lines"),
+        plot.margin=unit(c(1,1,-0.001,1), "cm"))
+
+
+Strain_plot_detection_3_with_total_reads <- ggarrange(plot_total_reads_detection_3, plot_strain_level_detection_3,
+          ncol = 1,
+          heights = c(0.25,2))
+
+
+
+
+
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Detection/Strain_level_Haemophilus_parainfluenzae_TD_vs_SUPP_detection_50breadth_1x.pdf",Strain_plot_detection_3_with_total_reads, width = 10, height = 8)
+
+```
+
+
+Add ANI panel
+```{r}
+# packages
+library(ggplot2)
+library(tidyr)
+library(reshape2)
+library(phytools)
+library(tibble)
+
+library(dendextend)
+library(ape)
+library(dplyr)
+
+# load ANI data
+df <-read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/ANI/ANI_RESULTS/ANIb_percentage_identity.txt", header = TRUE)
+
+# load ANI tree
+df_newick <-  ape::read.tree("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/ANI/ANI_RESULTS/ANIb_percentage_identity.newick")
+
+
+# order ANI data by ANI tree
+df_newick_orders <- phytools::compute.mr(df_newick, type = "matrix")
+df_newick_rownames <- rev(rownames(df_newick_orders))
+data_ordered <- df[ order(match(df$key, df_newick_rownames)), ]
+df_newick_rownames_df <- as.data.frame(df_newick_rownames)
+cols_A<- ncol(df) -1
+df_newick_rownames_df2 <- as.data.frame(matrix(df_newick_rownames_df$df_newick_rownames, ncol = cols_A, byrow = TRUE))
+names(df_newick_rownames_df2) <- df_newick_rownames_df2[1,]
+df_newick_rownames_df3 <- df_newick_rownames_df2[-1,]
+df_newick_rownames_df3 <- df_newick_rownames_df3 %>% 
+  add_column(key = NA, .before = 1)
+data_ordered2<-data_ordered[names(df_newick_rownames_df3)]
+
+cols2<- ncol(data_ordered2) 
+long_df <- reshape2::melt(data_ordered2,
+                          id.vars=c("key"),
+                          measure.vars=colnames(data_ordered2[2:cols2]),
+                          variable.name="y",
+                          value.name="z")
+mylevels1 <- df_newick$tip.label
+long_df$key <- factor(long_df$key,levels=mylevels1)
+long_df$y <- factor(long_df$y, levels=mylevels1)
+
+
+H_parainfluenzae_TD_and_SUPP_group = c("H_parainfluenzae_str_M1C137_2_id_GCA_014931395_1", "H_parainfluenzae_str_M1C149_1_id_GCA_014931315_1", "H_parainfluenzae_str_T3T1_id_GCA_000210895_1", "H_parainfluenzae_str_M1C146_1_id_GCA_014931355_1", "H_sp_str_HMSC066D03_id_GCA_001811025_1", "H_parainfluenzae_str_M1C113_1_id_GCA_014931475_1", "H_parainfluenzae_str_C2004000280_id_GCA_003252725_1", "H_parainfluenzae_str_M1C111_2_id_GCA_014982385_1", "H_sp_str_HMSC71H05_id_GCA_001838635_1", "H_parainfluenzae_str_209_HPAR_id_GCA_001055885_1", "H_parainfluenzae_str_C2004002729_id_GCA_003252795_1", "H_parainfluenzae_str_M1C147_1_id_GCA_014931335_1", "H_parainfluenzae_str_M1C130_2_id_GCA_014931415_1", "H_parainfluenzae_str_M1C125_4_id_GCA_014931435_1", "H_parainfluenzae_str_M1C120_2_id_GCA_014931455_1", "H_parainfluenzae_str_146_HPAR_id_GCA_001053575_1", "H_sp_str_HMSC068C11_id_GCA_001815355_1", "H_parainfluenzae_str_432_HPAR_id_GCA_001055095_1", "H_parainfluenzae_str_901_HPAR_id_GCA_001059815_1", "H_sp_str_HMSC061E01_id_GCA_001810345_1", "H_parainfluenzae_str_M1C142_1_id_GCA_014931375_1", "H_parainfluenzae_str_C2008001710_id_GCA_003252775_1", "H_sp_str_CCUG_60358_id_GCA_001679485_1", "H_parainfluenzae_str_M1C152_1_id_GCA_014931295_1", "H_parainfluenzae_str_M1C160_1_id_GCA_014931275_1", "H_parainfluenzae_str_137_HINF_id_GCA_001053535_1",
+"H_parainfluenzae_str_CCUG_58848_id_GCA_001679405_1",
+"H_parainfluenzae_str_488_HPAR_id_GCA_001057005_1",
+"H_parainfluenzae_str_NCTC_7857_id_GCA_900450845_1",
+"H_parainfluenzae_str_UMB0748_id_GCA_002884755_1",
+"H_sp_str_HMSC61B11_id_GCA_001838615_1",
+"H_parainfluenzae_str_HK262_id_GCA_000259485_1")
+
+
+long_df <- long_df %>% 
+  filter(key %in% H_parainfluenzae_TD_and_SUPP_group) %>% 
+  filter(y %in% H_parainfluenzae_TD_and_SUPP_group)
+
+ANI_panel <- ggplot(long_df, aes(key,y, fill = z)) +
+    geom_tile(height=1, width=1) + 
+    scale_fill_gradient2(low = "darkblue",
+                         mid = "white",
+                         high = "darkred",
+                         midpoint = 0.95,
+                         limits =c(0.90, 1))+
+    #geom_text(aes(label = format(round(z, digits=3), nsmall = 3)),size=2.75) +
+    ylab("") +  
+    xlab("") + 
+    theme_classic() + 
+    theme(axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_line(size = 1),
+          axis.ticks.x = element_line(size = 1)) 
+
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Detection/Strain_level_Haemophilus_parainfluenzae_TD_vs_SUPP_ANI.pdf",ANI_panel, width = 5, height = 6)
+
+```
+
+
+# Figure S1: Strain-level mean depth of coverage (Q2Q3)
+
+##### Organize data
+```{r}
+# Load mean coverage Q2Q3 data into R
+df_coverage = read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/13_DETECTED_GENOMES/P_0622_Haemophilus_Aggregatibacter-mean_coverage_Q2Q3.txt", header=TRUE)
+
+metadata <- read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/sequencing-metadata-count-QC.tsv", header=TRUE)
+
+melted_df_coverage <- melt(df_coverage)
+
+
+# rename metagenomes to just site name
+melted_df_coverage$variable=gsub("_HC_HMP","",melted_df_coverage$variable)
+
+
+# make oral site variable for facet grid
+melted_df_coverage_2 <- melted_df_coverage %>% mutate(site = case_when(grepl('TD_', variable) ~ 'TD', 
+                                                                       grepl('KG_', variable) ~ 'KG', 
+                                                                       grepl('PP_', variable) ~ 'SUPP',
+                                                                       grepl('PB_', variable) ~ 'SUBP',
+                                                                       grepl('SA_', variable) ~ 'SV',
+                                                                       grepl('TH_', variable) ~ 'TH',
+                                                                       grepl('PT_', variable) ~ 'PT',
+                                                                       grepl('HP_', variable) ~ 'HP',
+                                                                       grepl('BM_', variable) ~ 'BM')) 
+
+
+# specify order for site terms
+melted_df_coverage_2$site <- factor(melted_df_coverage_2$site, levels = c("SUPP","SUBP", "KG", "BM","SV", "PT","TD", "TH", "HP"))
+
+# sort "variable" based on pre-sorted values of "site"
+melted_df_coverage_2 <- melted_df_coverage_2 %>%
+  arrange(site, variable) %>%               # sort your dataframe
+  mutate(variable = factor(variable, unique(variable))) # reset your factor-column based on that order
+
+# reorder genomes
+melted_df_coverage_2$bins <- factor(melted_df_coverage_2$bins, levels = levels_Genome_ID)
+
+# order samples based on total number of reads
+melted_df_coverage_2 = merge.data.frame(df_mapping_stats_2, melted_df_coverage_2, by.x = "Internal_ID_2", by.y = "variable") 
+
+# join metadata with to rel abs data frame by metagenomeID 
+melted_df_coverage_2_joined <- merge(melted_df_coverage_2, metadata, by = "Internal_ID")
+
+# remove redundant columns
+melted_df_coverage_2_joined <- melted_df_coverage_2_joined %>% 
+  dplyr::rename(QC_total_reads = QC_total_reads.x) %>% 
+  select(-QC_total_reads.y)
+
+
+# save data
+write.csv(file = "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/13_DETECTED_GENOMES/P_0622_Haemophilus_Aggregatibacter-EDITED_mean_coverage_strain_level_Q2Q3.csv", melted_df_coverage_2_joined, row.names = FALSE, quote = FALSE)
+
+
+# reorder genomes again
+melted_df_coverage_2_joined$bins <- factor(melted_df_coverage_2_joined$bins, levels = rev(levels_Genome_ID))
+
+
+```
+
+Get subset of data where coverage equals 0.25. This will be used to inform color schemeing, where we can gray out values less than 0.25 or less than 1 x
+```{r}
+
+melted_df_coverage_2_joined_1x <- melted_df_coverage_2_joined %>% 
+  filter(value <= 1)
+
+melted_df_coverage_2_joined_1x_mutated <- melted_df_coverage_2_joined %>% 
+  mutate(value_mutated = if_else(value < 1, 0, value))
+
+
+
+
+```
+
+##### Make figure
+```{r}
+library(ggplot2)
+library(ggh4x)
+library(reshape2)
+library(tidyr)
+library(vegan)
+library(ggdendro)
+library(RColorBrewer)
+library(scales)
+
+# set colors for heat map
+paleta_new = rev(RColorBrewer::brewer.pal(n = 11, name = "RdYlBu"))
+
+# Define custom labels
+custom_labels <- as_labeller(c("SUPP" = "SUPP (210)", "SUBP" = "SUBP (19)", "KG" = "KG (14)", "BM" = "BM (183)", "SV" = "SV (7)", "PT" = "PT (19)", "TD" = "TD (220)", "TH" = "TH (13)", "HP" = "HP (1)"))
+
+
+# Simplified plot for testing
+test_plot <- ggplot(data = melted_df_coverage_2_joined_1x_mutated, aes(x=reorder(Internal_ID,-QC_total_reads), y=bins, fill=value_mutated)) + 
+  geom_tile(height=1, width=1) + 
+  facet_grid(. ~ site, scales = "free", space = "free", switch = "x", labeller = custom_labels) + 
+  scale_fill_gradientn(colours = paleta_new, limits=c(0, 10), breaks=seq(0,10,by=2),oob=squish,labels = c("< 1X", "2X", "4X", "6X", "8X", "> 10X")) + 
+  scale_y_discrete(limits = rev(levels(melted_df_coverage_2_joined_1x_mutated$bins))) +
+  ylab(NULL) +  
+  xlab(NULL) + 
+  guides(fill = guide_colourbar(barwidth = 1,
+                                barheight = 10,
+                                title = "Mean coverage",
+                                ticks = TRUE,
+                                ticks.colour = "white",
+                                ticks.linewidth = 0.5)) +
+  theme_classic() + 
+  theme(text = element_text(size = 10, color = "black"),
+        axis.ticks.y = element_line(linewidth = 1, colour = tick_colors),
+        axis.ticks.length = unit(1, "cm"),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic", color = "black", size = 2),
+        axis.line.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_blank(),
+        strip.background = element_rect(colour=NA, fill=NA)) + 
+  force_panelsizes(cols = unit(c(4,1.5,1,4,1,1,4,1,1), "cm"), 
+                   TRUE)
+
+dodge <- position_dodge(width=0.9)
+
+test_total_reads <- ggplot(data = melted_df_coverage_2_joined_1x_mutated, aes(x=reorder(Internal_ID, -QC_total_reads), y=QC_total_reads)) + 
+  geom_bar(stat = 'identity',position = dodge, fill = "blue") +
+  facet_grid(. ~ site , scales = "free", space = "free", switch = "x") +
+  scale_y_continuous(expand = c(0, 0), limits=c(0, 100000000), breaks=seq(0,100000000,by=100000000), oob=squish, labels = scales::comma) +
+  xlab(NULL)+
+  ylab("Total reads") +
+  theme_classic() + 
+  theme(text = element_text(size = 8),
+        axis.ticks.y = element_line(size = 1),
+        axis.text.x=element_blank(),
+        axis.text.y =  element_text(face = "italic"),
+        axis.line.x = element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_rect(fill = "white")) + 
+  theme(strip.background = element_blank(),
+        #panel.border = element_rect(colour = "white", fill = NA),
+        panel.border = element_blank(),
+        strip.text.x = element_blank()) +
+  theme(plot.margin=unit(c(1,1,-0.001,1), "cm")) +
+  force_panelsizes(cols = unit(c(4,1.5,1,4,1,1,4,1,1), "cm"), 
+                   TRUE)
+
+
+test_2 <- egg::ggarrange(test_total_reads, test_plot, ncol = 1,heights = c(0.25,2))
+
+ggsave("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/MeanCoverage/Strain_level_Haemophilus_and_Aggregatibacter_mean_cov_Q2Q3.pdf",test_2, width = 10.85, height = 7)
+
+```
+
+
+# Figure S2: Ternary plot of reciprocal relationship between three abundant species in supragingival plaque
+
+Need to organize the data so that it can be used to make a ternary plot. The goal is to plot the relative abundances of three different species, each species at a corner of the plot, for a single oral site where we observed species-complimentarity/recriprocity. This includes Suppragingingival plaque, in which there appears to be a decreasing relationshiop between three species: A. aphrophilus, A. sp .HMT-458 and H. parainfluenzae. We first need to recalculate relative abundance with respect to the three focal species, then each point in the plot will represent a single SUPP sample. The size of the point can vary depending on a continuous variable, such as number of mapped reads or total number of reads and the color of each point can vary depending on a discrete factor, such as subject ID or visit number. I suggest that we make several version sof the plot: one that inlcudes all SUPP samples, one that includes only visit 1 samples, and one that inlcudes only subjects samples three times with visit number color coded.  
+
+
+First we need to reorganize the relative abundance data:
+
+1. Filter by oral site
+2. Filter by focal taxa
+3. Recalculate relative abundance - for each species defined as the relative abundance for each species at a site divided by the sum of the relative abundances for all three species — for example, H.para/(H.para + A.aphrophilus + HMT-458)
+4. Select the following columns for plotting: para_rel, aphrophilus_rel, hmt458_rel, size (mapped reads), symbol (circle), opacity (1), fill ("black"), stroke ("white"), title ("Internal_ID", or "Subject_ID")
+
+```{r}
+
+relabs_df <- read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/13_DETECTED_GENOMES/P_0622_Haemophilus_Aggregatibacter-SPECIES-LEVEL-relative_abundance_Q2Q3_detected_only.csv", header = TRUE)
+
+
+
+relabs_df_ternary_1 <- relabs_df %>% 
+  select(Internal_ID, Subject_ID, Sample_time, site, QC_total_reads, total_reads_mapped, new_species_ID_detection, sum) %>% 
+  filter(site == "SUPP") %>% 
+  filter(new_species_ID_detection == "A_aphrophilus" |new_species_ID_detection == "A_sp_HMT_458" | new_species_ID_detection == "H_parainfluenzae_group_SUPP") %>% 
+  droplevels()
+
+# pivot wider for recalc rel ab and to remove samples where all three taxa absent
+  relabs_df_ternary_1_wide <- pivot_wider(relabs_df_ternary_1, names_from = new_species_ID_detection, values_from = sum)
+  
+  # remove samples where both species are not present (sum = 0 for both)
+    # Create list of samples where both species absent
+   ternary_absence_list <- subset(relabs_df_ternary_1_wide, rowSums(relabs_df_ternary_1_wide[, -1:-6]) == 0)
+   ternary_absence_list <- ternary_absence_list %>% select(Internal_ID)
+    
+  # Remove rows in data frame that match rows in absence list
+  relabs_df_ternary_1_wide_filtered <- relabs_df_ternary_1_wide[!(relabs_df_ternary_1_wide$Internal_ID %in% ternary_absence_list$Internal_ID), ]
+  
+  # covert from tibble to data frame
+  relabs_df_ternary_1_wide_filtered <- as.data.frame(relabs_df_ternary_1_wide_filtered)
+  
+  
+relabs_df_ternary_1_wide_filtered$H_parainfluenzae_group_SUPP_recalc <- (relabs_df_ternary_1_wide_filtered$H_parainfluenzae_group_SUPP/(relabs_df_ternary_1_wide_filtered$A_aphrophilus+relabs_df_ternary_1_wide_filtered$H_parainfluenzae_group_SUPP+relabs_df_ternary_1_wide_filtered$A_sp_HMT_458))
+relabs_df_ternary_1_wide_filtered$H_parainfluenzae_group_SUPP_recalc[is.na(relabs_df_ternary_1_wide_filtered$H_parainfluenzae_group_SUPP_recalc)] <- 0
+
+relabs_df_ternary_1_wide_filtered$A_aphrophilus_recalc <- (relabs_df_ternary_1_wide_filtered$A_aphrophilus/(relabs_df_ternary_1_wide_filtered$A_aphrophilus+relabs_df_ternary_1_wide_filtered$H_parainfluenzae_group_SUPP+relabs_df_ternary_1_wide_filtered$A_sp_HMT_458))
+relabs_df_ternary_1_wide_filtered$A_aphrophilus_recalc[is.na(relabs_df_ternary_1_wide_filtered$A_aphrophilus_recalc)] <- 0
+
+relabs_df_ternary_1_wide_filtered$A_sp_HMT_458_recalc <- (relabs_df_ternary_1_wide_filtered$A_sp_HMT_458/(relabs_df_ternary_1_wide_filtered$A_aphrophilus+relabs_df_ternary_1_wide_filtered$H_parainfluenzae_group_SUPP+relabs_df_ternary_1_wide_filtered$A_sp_HMT_458))
+relabs_df_ternary_1_wide_filtered$A_sp_HMT_458_recalc[is.na(relabs_df_ternary_1_wide_filtered$A_sp_HMT_458_recalc)] <- 0
+
+
+relabs_df_ternary_1_wide_filtered_final <- relabs_df_ternary_1_wide_filtered %>% 
+  mutate(symbol = "circle",
+          opacity = 0.75,
+          fill = "black",
+          stroke = "white") %>% 
+  dplyr::rename(a = H_parainfluenzae_group_SUPP_recalc,
+         b = A_aphrophilus_recalc,
+         c = A_sp_HMT_458_recalc,
+         size = total_reads_mapped,
+         title = Internal_ID) %>% 
+  select(a, b, c, size, symbol, opacity, fill, stroke, title)
+
+
+library(scales)
+relabs_df_ternary_1_wide_filtered_final$size <- rescale(relabs_df_ternary_1_wide_filtered_final$size, to = c(5, 1000))
+
+write.csv(relabs_df_ternary_1_wide_filtered_final, "/Users/home/Downloads/Ternary_plots/SUPP_ternary_plot_df.csv", row.names = FALSE, quote = FALSE)
+
+
+
+
+#### Subjects with 3 visits
+
+relabs_df_ternary_2_wide_filtered <- merge(relabs_df_ternary_1_wide_filtered, melted_relAbs_merged_summed_SUPP_triples_list, by = "Subject_ID")
+
+
+  # Generate a vector of unique colors for each visit number
+  colors <- scales::hue_pal(h = c(0, 360), c = 100, l = 60)(length(unique(relabs_df_ternary_2_wide_filtered$Sample_time)))
+  
+  # Add a new 'Color' column to the data frame
+  relabs_df_ternary_2_wide_filtered$fill <- colors[match(relabs_df_ternary_2_wide_filtered$Sample_time, unique(relabs_df_ternary_2_wide_filtered$Sample_time))]
+  
+  
+relabs_df_ternary_2_wide_filtered_final <- relabs_df_ternary_2_wide_filtered %>% 
+  mutate(symbol = "circle",
+          opacity = 0.75,
+          stroke = "white") %>% 
+  dplyr::rename(a = H_parainfluenzae_group_SUPP_recalc,
+         b = A_aphrophilus_recalc,
+         c = A_sp_HMT_458_recalc,
+         size = total_reads_mapped,
+         title = Sample_time) %>% 
+  select(a, b, c, size, symbol, opacity, fill, stroke, title, )
+
+
+library(scales)
+relabs_df_ternary_2_wide_filtered_final$size <- rescale(relabs_df_ternary_2_wide_filtered_final$size, to = c(5, 1000))
+
+write.csv(relabs_df_ternary_2_wide_filtered_final, "/Users/home/Downloads/Ternary_plots/SUPP_ternary_plot_triple_visit_subjects_df.csv", row.names = FALSE, quote = FALSE)
+
+
+
+```
+
+GARY: Jittering is good but perhaps not sufficient. It is important to know how may bubbles are at the corners. Also along the edges. Please make a table showing number and fraction of bubbles at each of the corners and total; number and fraction of bubbles on each of the edges and total; and number and fraction of bubbles in the interior. Such tabular information may help.
+
+Columns: Each bubble is a row in the data frame
+
+total = Total no of bubbles is equal to the number of rows
+
+a_corner = No. of bubbles at corner a is equal to the number of a values equal to 100
+b_corner = No. of bubbles at corner b is equal to the number of b values equal to 100
+c_corner = No. of bubbles at corner c is equal to the number of b values equal to 100
+total_corner = Total no of bubbles is in a corner equal to the sum of the above
+
+a_b_edge = No. of bubbles at edge a - b  is equal to the number of rows/values in which a > 0 and b > 0, but c = 0 
+b_c_edge = No. of bubbles at edge b - c is equal to the number of rows/values in which b > 0 and c > 0, but a = 0 
+a_c_edge = No. of bubbles at edge a - c is equal to the number of rows/values in which a > 0 and c > 0, but b = 0 
+total_edge = Total no of bubbles on the edge is equal to the sum of the above 
+
+interior = No. of bubbles in interior is equal to the number of remaining rows
+
+Fractions of each can be calcualted from the above statistics.
+
+```{r}
+
+bubble_summary <- relabs_df_ternary_1_wide_filtered_final %>% 
+  summarise(total = n(),
+         a_corner = length(a[a>=0.9]),
+         b_corner = length(b[b>=0.9]),
+         c_corner = length(c[c>=0.9]),
+         total_corner = sum(a_corner, b_corner, c_corner),
+         a_corner_per_total = a_corner/total,
+         b_corner_per_total = b_corner/total,
+         c_corner_per_total = c_corner/total,
+         a_b_edge = sum(ifelse(a>0&a<0.9 & b>0&b<0.9 & c == 0, 1, 0)), 
+         b_c_edge = sum(ifelse(b>0&b<0.9 & c>0&c<0.9 & a == 0, 1, 0)), 
+         a_c_edge = sum(ifelse(a>0&a<0.9 & c>0&c<0.9 & b == 0, 1, 0)),
+         total_edge = sum(a_b_edge, b_c_edge, a_c_edge),
+         a_b_edge_per_total = a_b_edge/total,
+         b_c_edge_per_total = b_c_edge/total,
+         a_c_edge_per_total = a_c_edge/total,
+         interior = (total - total_corner - total_edge),
+         fraction_interior = interior/total
+         ) %>% 
+  select(total,
+         total_corner,
+         a_corner, a_corner_per_total,
+         b_corner, b_corner_per_total,
+         c_corner, c_corner_per_total,
+         total_edge,
+         a_b_edge, a_b_edge_per_total,
+         b_c_edge, b_c_edge_per_total,
+         a_c_edge, a_c_edge_per_total,
+         interior, fraction_interior
+         )
+
+
+write.csv(bubble_summary, "/Users/home/Downloads/Ternary_plots/SUPP_ternary_bubble_summary_90%.csv", row.names = FALSE, quote = FALSE)
+
+
+
+
+bubble_summary_2 <- relabs_df_ternary_2_wide_filtered_final %>% 
+  summarise(total = n(),
+         a_corner = length(a[a>=0.9]),
+         b_corner = length(b[b>=0.9]),
+         c_corner = length(c[c>=0.9]),
+         total_corner = sum(a_corner, b_corner, c_corner),
+         a_corner_per_total = a_corner/total,
+         b_corner_per_total = b_corner/total,
+         c_corner_per_total = c_corner/total,
+         a_b_edge = sum(ifelse(a>0&a<0.9 & b>0&b<0.9 & c == 0, 1, 0)), 
+         b_c_edge = sum(ifelse(b>0&b<0.9 & c>0&c<0.9 & a == 0, 1, 0)), 
+         a_c_edge = sum(ifelse(a>0&a<0.9 & c>0&c<0.9 & b == 0, 1, 0)),
+         total_edge = sum(a_b_edge, b_c_edge, a_c_edge),
+         a_b_edge_per_total = a_b_edge/total,
+         b_c_edge_per_total = b_c_edge/total,
+         a_c_edge_per_total = a_c_edge/total,
+         interior = (total - total_corner - total_edge),
+         fraction_interior = interior/total
+         ) %>% 
+  select(total,
+         total_corner,
+         a_corner, a_corner_per_total,
+         b_corner, b_corner_per_total,
+         c_corner, c_corner_per_total,
+         total_edge,
+         a_b_edge, a_b_edge_per_total,
+         b_c_edge, b_c_edge_per_total,
+         a_c_edge, a_c_edge_per_total,
+         interior, fraction_interior
+         )
+
+
+write.csv(bubble_summary_2, "/Users/home/Downloads/Ternary_plots/SUPP_ternary_triple_visit_bubble_summary_90%.csv", row.names = FALSE, quote = FALSE)
+
+
+```
+
+What is going on with the interior bubbles?
+
+```{r}
+
+
+
+ternary_1_interior_list <- relabs_df_ternary_1_wide_filtered_final %>% 
+  mutate(interior = ifelse(a>0&a<0.9 & b>0&b<0.9 & c>0&c<0.9, 1, 0)) %>% 
+  filter(interior == 1) %>% 
+  select(title) %>% 
+  dplyr::rename(Internal_ID = title)
+
+
+
+```
+
+
+#Stochastic test for ternary plot results
+
+The following code implements a permutation test to assess the statistical significance of differences between an observed data set and a set of simulated data sets. It begins by generating simulated data sets with relative abundance values, followed by determining the locations of bubbles based on predefined rules. The frequencies of each location are then calculated for both the observed and simulated data sets. A contingency table is created, and a chi-square test of independence is performed to evaluate the association between the location and data set type. This process is repeated 1000 times and the p-value is computed from the mean of the p-values from the chi-square tests. If the p-value falls below the chosen significance level (0.05), it is concluded that the observed data set significantly differs from the simulated data sets. In summary, the permutation test provides a rigorous and data-driven approach to assess the significance of the observed bubble locations in the ternary plot, helping determine whether the locations are likely driven by an association between the species' relative abundances or are simply due to random chance.
+
+
+
+```{r runif}
+
+num_permutations = 1000
+
+# Initialize an empty matrix for permuted test statistics
+permuted_test_statistics <- data.frame(x= numeric(0), y= numeric(0))
+x <- c("pvalue", "sim")
+colnames(permuted_test_statistics) <- x
+
+# Calculate observed location frequencies
+observed_locations <- as.data.frame(with(your_data, table(location)))
+
+# add column for data set type
+observed_locations <- observed_locations %>% 
+  mutate(dataset = "Observed")
+
+
+for (j in 1:num_permutations) {
+
+  # Step 1: Generate simulated data set of relative abundances
+  num_sim_samples <- 168  # Number of rows in the simulated data set
+  
+  # Initialize an empty data frame to store the simulated data
+  simulated_data <- data.frame(a = numeric(num_sim_samples),
+                               b = numeric(num_sim_samples),
+                               c = numeric(num_sim_samples))
+  
+  # Generate relative abundance values for each simulation
+  for (i in 1:num_sim_samples) {
+    simulated_data[i, "a"] <- runif(n = 1, min = 0, max =1)  # Modify the distribution or constraints as needed
+    simulated_data[i, "b"] <- runif(n = 1, min = 0, max =1)  # Modify the distribution or constraints as needed
+    simulated_data[i, "c"] <- runif(n = 1, min = 0, max =1)  # Modify the distribution or constraints as needed
+  }
+  
+  # recalc relative abundance 
+  simulated_data$a_2 <- (simulated_data$a/(simulated_data$b+simulated_data$a+simulated_data$c))
+  simulated_data$a_2[is.na(simulated_data$a_2)] <- 0
+  
+  simulated_data$b_2 <- (simulated_data$b/(simulated_data$b+simulated_data$a+simulated_data$c))
+  simulated_data$b_2[is.na(simulated_data$b_2)] <- 0
+  
+  simulated_data$c_2 <- (simulated_data$c/(simulated_data$b+simulated_data$a+simulated_data$c))
+  simulated_data$c_2[is.na(simulated_data$c_2)] <- 0
+  
+  simulated_data$a <- simulated_data$a_2
+  simulated_data$b <- simulated_data$b_2
+  simulated_data$c <- simulated_data$c_2
+  
+  # drop irrelevant cols
+  simulated_data <- simulated_data %>% 
+    select(a, b, c) 
+  
+  # Step 2: Calculate the locations of bubbles for each simulated data set
+  simulated_locations <- apply(simulated_data, 1, function(row) {
+    # Apply the rules to determine the location based on relative abundances
+    if (row["a"] >= 0.9) {
+      return("a_corner")
+    } else if (row["b"] >= 0.9) {
+      return("b_corner")
+    } else if (row["c"] >= 0.9) {
+      return("c_corner")
+    } else if ((row["a"] > 0 & row["a"] < 0.9 & row["b"] > 0 & row["b"] < 0.9 & row["c"] < 0.01)) {
+      return("a_b_edge")
+    } else if ((row["a"] > 0 & row["a"] < 0.9 & row["b"] < 0.01 & row["c"] > 0 & row["c"] < 0.9)) {
+      return("a_c_edge")
+    } else if ((row["a"] < 0.01 & row["b"] > 0 & row["b"] < 0.9 & row["c"] > 0 & row["c"] < 0.9)) {
+      return("b_c_edge")
+    } else {
+      return("interior")
+    }
+  })
+  
+  
+  # Step 4: Calculate simulated location frequencies
+  simulated_location_frequencies <- as.data.frame(table(simulated_locations))
+  
+  # add column for data set type
+  simulated_location_frequencies <- simulated_location_frequencies %>% 
+    mutate(
+      dataset = "Simulated") %>% 
+    dplyr::rename(location = "simulated_locations")
+  
+  
+  # combine data sets
+  df <- rbind(observed_locations, simulated_location_frequencies)
+  df$dataset <- as.factor(df$dataset)
+  
+  # Create the contingency table
+  contingency_table <- df %>% pivot_wider(names_from = dataset, values_from = Freq)
+  
+  # if NA make 0
+  contingency_table$Simulated[is.na(contingency_table$Simulated)] <- 0
+  
+  # turn into matrix
+  contingency_table <- as.matrix(data.matrix(contingency_table))
+  
+  
+  # Perform chisq test of independence
+  chisq_test_result <- stats::chisq.test(contingency_table, simulate.p.value = TRUE)
+  
+  # Print the test result
+  permuted_statistic <- chisq_test_result$p.value
+  
+  # Store the permuted test statistic
+
+  res <- c("pvalue" = permuted_statistic, "sim" = j)
+  
+  #
+  permuted_test_statistics <- rbind(permuted_test_statistics, res)
+  
+
+}
+
+colnames(permuted_test_statistics) <- x
+mean_pvalue = mean(permuted_test_statistics$pvalue)
+
+# Print the result
+if (mean_pvalue < 0.05) {
+  cat("The original data set is significantly different from the simulated data sets.")
+} else {
+  cat("The original data set is not significantly different from the simulated data sets.")
+}
+
+
+# 0.0004997501
+
+
+# combine simulated data set with metadata so that we can make a ternary plot
+
+simulated_data_ternary_df <- simulated_data %>% 
+  mutate(symbol = "circle",
+         opacity = 0.75,
+         fill = "black",
+         stroke = "white",
+         title = relabs_df_ternary_1_wide_filtered_final$title,
+         size = relabs_df_ternary_1_wide_filtered_final$size) %>% 
+  select(a, b, c, size, symbol, opacity, fill, stroke, title)
+
+
+write.csv(simulated_data_ternary_df,"/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Ternary_plots/simulated_data_SUPP_ternary_plot_df.csv", row.names = FALSE, quote = FALSE)
+
+
+bubble_summary_sim <- simulated_data_ternary_df %>% 
+  summarise(total = n(),
+         a_corner = length(a[a>=0.9]),
+         b_corner = length(b[b>=0.9]),
+         c_corner = length(c[c>=0.9]),
+         total_corner = sum(a_corner, b_corner, c_corner),
+         a_corner_per_total = a_corner/total,
+         b_corner_per_total = b_corner/total,
+         c_corner_per_total = c_corner/total,
+         a_b_edge = sum(ifelse(a>0&a<0.9 & b>0&b<0.9 & c < 0.01, 1, 0)), 
+         b_c_edge = sum(ifelse(b>0&b<0.9 & c>0&c<0.9 & a < 0.01, 1, 0)), 
+         a_c_edge = sum(ifelse(a>0&a<0.9 & c>0&c<0.9 & b < 0.01, 1, 0)),
+         total_edge = sum(a_b_edge, b_c_edge, a_c_edge),
+         a_b_edge_per_total = a_b_edge/total,
+         b_c_edge_per_total = b_c_edge/total,
+         a_c_edge_per_total = a_c_edge/total,
+         interior = (total - total_corner - total_edge),
+         fraction_interior = interior/total
+         ) %>% 
+  select(total,
+         total_corner,
+         a_corner, a_corner_per_total,
+         b_corner, b_corner_per_total,
+         c_corner, c_corner_per_total,
+         total_edge,
+         a_b_edge, a_b_edge_per_total,
+         b_c_edge, b_c_edge_per_total,
+         a_c_edge, a_c_edge_per_total,
+         interior, fraction_interior
+         )
+
+
+write.csv(bubble_summary_sim, "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Ternary_plots/simulated_SUPP_ternary_triple_visit_bubble_summary_90%.csv", row.names = FALSE, quote = FALSE)
+
+
+
+```
+
+
+```{r shuffled}
+
+observed_df <- relabs_df_ternary_1_wide_filtered_final
+
+number_rows <- length(observed_df$a)
+
+num_permutations = 1000
+
+# Initialize an empty matrix for permuted test statistics
+permuted_test_statistics <- data.frame(x= numeric(0), y= numeric(0))
+x <- c("pvalue", "sim")
+colnames(permuted_test_statistics) <- x
+
+# Calculate observed location frequencies
+observed_locations <- as.data.frame(with(your_data, table(location)))
+
+# add column for data set type
+observed_locations <- observed_locations %>% 
+  mutate(dataset = "Observed")
+
+
+for (j in 1:num_permutations) {
+  
+
+  # Initialize an empty data frame to store the simulated data
+  simulated_data <- data.frame(a = numeric(number_rows),
+                               b = numeric(number_rows),
+                               c = numeric(number_rows))
+  
+  # Shuffle relative abundance values for each simulation
+  
+  simulated_data$a <- sample(observed_df$a, size = number_rows)  # Modify the distribution or constraints as needed
+  simulated_data$b <- sample(observed_df$b, size = number_rows)  # Modify the distribution or constraints as needed
+  simulated_data$c <- sample(observed_df$c, size = number_rows)  # Modify the distribution or constraints as needed
+  
+  
+  # recalc relative abundance 
+  simulated_data$a_2 <- (simulated_data$a/(simulated_data$b+simulated_data$a+simulated_data$c))
+  simulated_data$a_2[is.na(simulated_data$a_2)] <- 0
+  
+  simulated_data$b_2 <- (simulated_data$b/(simulated_data$b+simulated_data$a+simulated_data$c))
+  simulated_data$b_2[is.na(simulated_data$b_2)] <- 0
+  
+  simulated_data$c_2 <- (simulated_data$c/(simulated_data$b+simulated_data$a+simulated_data$c))
+  simulated_data$c_2[is.na(simulated_data$c_2)] <- 0
+  
+  simulated_data$a <- simulated_data$a_2
+  simulated_data$b <- simulated_data$b_2
+  simulated_data$c <- simulated_data$c_2
+  
+  # drop irrelevant cols
+  simulated_data <- simulated_data %>% 
+    select(a, b, c) 
+  
+  # Step 2: Calculate the locations of bubbles for each simulated data set
+  simulated_locations <- apply(simulated_data, 1, function(row) {
+    # Apply the rules to determine the location based on relative abundances
+    if (row["a"] >= 0.9) {
+      return("a_corner")
+    } else if (row["b"] >= 0.9) {
+      return("b_corner")
+    } else if (row["c"] >= 0.9) {
+      return("c_corner")
+    } else if ((row["a"] > 0 & row["a"] < 0.9 & row["b"] > 0 & row["b"] < 0.9 & row["c"] < 0.01)) {
+      return("a_b_edge")
+    } else if ((row["a"] > 0 & row["a"] < 0.9 & row["b"] < 0.01 & row["c"] > 0 & row["c"] < 0.9)) {
+      return("a_c_edge")
+    } else if ((row["a"] < 0.01 & row["b"] > 0 & row["b"] < 0.9 & row["c"] > 0 & row["c"] < 0.9)) {
+      return("b_c_edge")
+    } else {
+      return("interior")
+    }
+  })
+  
+  
+  # Step 4: Calculate simulated location frequencies
+  simulated_location_frequencies <- as.data.frame(table(simulated_locations))
+  
+  # add column for data set type
+  simulated_location_frequencies <- simulated_location_frequencies %>% 
+    mutate(
+      dataset = "Simulated") %>% 
+    dplyr::rename(location = "simulated_locations")
+  
+  
+  # combine data sets
+  df <- rbind(observed_locations, simulated_location_frequencies)
+  df$dataset <- as.factor(df$dataset)
+  
+  # Create the contingency table
+  contingency_table <- df %>% pivot_wider(names_from = dataset, values_from = Freq)
+  
+  # if NA make 0
+  contingency_table$Simulated[is.na(contingency_table$Simulated)] <- 0
+  
+  # turn into matrix
+  contingency_table <- as.matrix(data.matrix(contingency_table))
+  
+  
+  # Perform chisq test of independence
+  chisq_test_result <- stats::chisq.test(contingency_table, simulate.p.value = TRUE)
+  
+  # Print the test result
+  permuted_statistic <- chisq_test_result$p.value
+  
+  # Store the permuted test statistic
+  
+  res <- c("pvalue" = permuted_statistic, "sim" = j)
+  
+  #
+  permuted_test_statistics <- rbind(permuted_test_statistics, res)
+  
+  
+}
+
+colnames(permuted_test_statistics) <- x
+mean_pvalue = mean(permuted_test_statistics$pvalue)
+
+# Print the result
+if (mean_pvalue < 0.05) {
+  cat("The original data set is significantly different from the simulated data sets.")
+} else {
+  cat("The original data set is not significantly different from the simulated data sets.")
+}
+
+
+# mean p-vlaue = 0.03837381
+
+
+# get spread of p value Confidence Interval = (point estimate)+/-(critical value)*(standard error)
+
+SD_pvalue = sd(permuted_test_statistics$pvalue)
+
+n <- 1000
+xbar <- mean_pvalue
+s <- sd(permuted_test_statistics$pvalue)
+
+margin <- qt(0.975,df=n-1)*s/sqrt(n)
+
+lowerinterval <- xbar - margin
+lowerinterval 
+#[1] 0.03530023
+upperinterval <- xbar + margin
+upperinterval 
+#[1] 0.0414474
+
+#The true p-value has a 95% confidence interval of [0.03530023, 0.0414474].
+
+
+# combine simulated data set with metadata so that we can make a ternary plot
+
+simulated_data_ternary_df <- simulated_data %>% 
+  mutate(symbol = "circle",
+         opacity = 0.75,
+         fill = "black",
+         stroke = "white",
+         title = relabs_df_ternary_1_wide_filtered_final$title,
+         size = relabs_df_ternary_1_wide_filtered_final$size) %>% 
+  select(a, b, c, size, symbol, opacity, fill, stroke, title)
+
+
+write.csv(simulated_data_ternary_df,"/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Ternary_plots/simulated_data_shuffled_SUPP_ternary_plot_df.csv", row.names = FALSE, quote = FALSE)
+
+
+shuffled_bubble_summary_sim <- simulated_data_ternary_df %>% 
+  summarise(total = n(),
+            a_corner = length(a[a>=0.9]),
+            b_corner = length(b[b>=0.9]),
+            c_corner = length(c[c>=0.9]),
+            total_corner = sum(a_corner, b_corner, c_corner),
+            a_corner_per_total = a_corner/total,
+            b_corner_per_total = b_corner/total,
+            c_corner_per_total = c_corner/total,
+            a_b_edge = sum(ifelse(a>0&a<0.9 & b>0&b<0.9 & c < 0.01, 1, 0)), 
+            b_c_edge = sum(ifelse(b>0&b<0.9 & c>0&c<0.9 & a < 0.01, 1, 0)), 
+            a_c_edge = sum(ifelse(a>0&a<0.9 & c>0&c<0.9 & b < 0.01, 1, 0)),
+            total_edge = sum(a_b_edge, b_c_edge, a_c_edge),
+            a_b_edge_per_total = a_b_edge/total,
+            b_c_edge_per_total = b_c_edge/total,
+            a_c_edge_per_total = a_c_edge/total,
+            interior = (total - total_corner - total_edge),
+            fraction_interior = interior/total
+  ) %>% 
+  select(total,
+         total_corner,
+         a_corner, a_corner_per_total,
+         b_corner, b_corner_per_total,
+         c_corner, c_corner_per_total,
+         total_edge,
+         a_b_edge, a_b_edge_per_total,
+         b_c_edge, b_c_edge_per_total,
+         a_c_edge, a_c_edge_per_total,
+         interior, fraction_interior
+  )
+
+
+write.csv(shuffled_bubble_summary_sim, "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Ternary_plots/shuffled_simulated_SUPP_ternary_triple_visit_bubble_summary_90%.csv", row.names = FALSE, quote = FALSE)
+
+
+
+```
+
+
+
+
+# Veillonella ternary plot
+
+```{r}
+Vei_rel_ab_df <- read.csv("/Users/home/Veillonella/Final_mapping_run_686_samples/melted_relAbs_group.csv", header = TRUE)
+
+
+filtered_Vei_rel_ab_df <- Vei_rel_ab_df %>% 
+  filter(site == "TD") %>% 
+  filter(groupID == "V. dispar" | groupID == "V. nakazawae" | groupID == "V. atypica") %>% 
+  droplevels()
+
+# pivot wider for recalc rel ab and to remove samples where all three taxa absent
+wide_filtered_Vei_rel_ab_df <- pivot_wider(filtered_Vei_rel_ab_df, names_from = groupID, values_from = sum)
+
+# remove samples where both species are not present (sum = 0 for both)
+# Create list of samples where both species absent
+Vei_ternary_absence_list <- subset(wide_filtered_Vei_rel_ab_df, rowSums(wide_filtered_Vei_rel_ab_df[, -1:-2]) == 0)
+Vei_ternary_absence_list <- Vei_ternary_absence_list %>% select(variable)
+
+# Remove rows in data frame that match rows in absence list
+wide_filtered_Vei_rel_ab_df <- wide_filtered_Vei_rel_ab_df[!(wide_filtered_Vei_rel_ab_df$variable %in% Vei_ternary_absence_list$variable), ]
+
+# covert from tibble to data frame
+wide_filtered_Vei_rel_ab_df <- as.data.frame(wide_filtered_Vei_rel_ab_df)
+
+# recalculate relative abundance with respect to the three focal species
+denomoinator <- (wide_filtered_Vei_rel_ab_df$`V. nakazawae` + wide_filtered_Vei_rel_ab_df$`V. atypica` + wide_filtered_Vei_rel_ab_df$`V. dispar`)
+
+wide_filtered_Vei_rel_ab_df$`V. dispar_recalc` <- wide_filtered_Vei_rel_ab_df$`V. dispar`/denomoinator
+wide_filtered_Vei_rel_ab_df$`V. dispar_recalc`[is.na(wide_filtered_Vei_rel_ab_df$`V. dispar_recalc`)] <- 0
+
+wide_filtered_Vei_rel_ab_df$`V. nakazawae_recalc` <- wide_filtered_Vei_rel_ab_df$`V. nakazawae`/denomoinator
+wide_filtered_Vei_rel_ab_df$`V. nakazawae_recalc`[is.na(wide_filtered_Vei_rel_ab_df$`V. nakazawae_recalc`)] <- 0
+
+wide_filtered_Vei_rel_ab_df$`V. atypica_recalc` <- wide_filtered_Vei_rel_ab_df$`V. atypica`/denomoinator
+wide_filtered_Vei_rel_ab_df$`V. atypica_recalc`[is.na(wide_filtered_Vei_rel_ab_df$`V. atypica_recalc`)] <- 0
+
+
+Final_wide_filtered_Vei_rel_ab_df <- wide_filtered_Vei_rel_ab_df %>% 
+  mutate(symbol = "circle",
+         opacity = 0.75,
+         fill = "black",
+         stroke = "white") %>% 
+  dplyr::rename(a = `V. dispar_recalc`,
+                b = `V. nakazawae_recalc`,
+                c = `V. atypica_recalc`,
+                title = variable) %>% 
+  select(a, b, c, symbol, opacity, fill, stroke, title)
+
+
+# Load metadata into R
+metadata <- read.table("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/DATA/sequencing-metadata-count-QC.tsv", header=TRUE)
+metadata.tmp <- metadata
+
+# rename metagenomes to just site name
+metadata.tmp$Internal_ID=gsub("_HC_HMP","",metadata.tmp$Internal_ID)
+
+# select
+metadata.tmp <- metadata.tmp %>% 
+  select(Internal_ID, QC_total_reads) %>% 
+  droplevels()
+
+# merge
+Final_wide_filtered_Vei_rel_ab_df <- merge(Final_wide_filtered_Vei_rel_ab_df, metadata.tmp, by.x = "title", by.y =  "Internal_ID")
+
+Final_wide_filtered_Vei_rel_ab_df <- Final_wide_filtered_Vei_rel_ab_df %>% 
+  mutate(size = QC_total_reads) %>% 
+  select(a, b, c, size, symbol, opacity, fill, stroke, title)
+
+
+library(scales)
+Final_wide_filtered_Vei_rel_ab_df$size <- rescale(Final_wide_filtered_Vei_rel_ab_df$size, to = c(5, 1000))
+
+write.csv(Final_wide_filtered_Vei_rel_ab_df, "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Ternary_plots/Veillonella_TD_ternary_plot_df.csv", row.names = FALSE, quote = FALSE)
+
+
+
+Vei_bubble_summary <- Final_wide_filtered_Vei_rel_ab_df %>% 
+  summarise(total = n(),
+            a_corner = length(a[a>=0.9]),
+            b_corner = length(b[b>=0.9]),
+            c_corner = length(c[c>=0.9]),
+            total_corner = sum(a_corner, b_corner, c_corner),
+            a_corner_per_total = a_corner/total,
+            b_corner_per_total = b_corner/total,
+            c_corner_per_total = c_corner/total,
+            a_b_edge = sum(ifelse(a>0&a<0.9 & b>0&b<0.9 & c == 0, 1, 0)), 
+            b_c_edge = sum(ifelse(b>0&b<0.9 & c>0&c<0.9 & a == 0, 1, 0)), 
+            a_c_edge = sum(ifelse(a>0&a<0.9 & c>0&c<0.9 & b == 0, 1, 0)),
+            total_edge = sum(a_b_edge, b_c_edge, a_c_edge),
+            a_b_edge_per_total = a_b_edge/total,
+            b_c_edge_per_total = b_c_edge/total,
+            a_c_edge_per_total = a_c_edge/total,
+            interior = (total - total_corner - total_edge),
+            fraction_interior = interior/total
+  ) %>% 
+  select(total,
+         total_corner,
+         a_corner, a_corner_per_total,
+         b_corner, b_corner_per_total,
+         c_corner, c_corner_per_total,
+         total_edge,
+         a_b_edge, a_b_edge_per_total,
+         b_c_edge, b_c_edge_per_total,
+         a_c_edge, a_c_edge_per_total,
+         interior, fraction_interior
+  )
+
+
+write.csv(Vei_bubble_summary, "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Ternary_plots/Veillonella_TD_ternary_plot_bubble_summary.csv", row.names = FALSE, quote = FALSE)
+
+
+
+```
+
+# Metaphlan Haemophilus/Aggregatibacter SUPP ternary plot
+
+```{r}
+metaphlan_df <- read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/Metaphlan/Metaphlan_Haemophilus_Aggregatibacter_HMP_metagenomes_res.csv", header = TRUE)
+
+# melt wide to long
+metaphlan_df_melted <- reshape2::melt(metaphlan_df)
+
+# make oral site variable for facet grid
+metaphlan_df_melted <- metaphlan_df_melted %>% 
+  mutate(site = case_when(grepl('_TD', variable) ~ 'TD',
+                          grepl('_KG', variable) ~ 'KG', 
+                          grepl('_SUPP', variable) ~ 'SUPP',
+                          grepl('_SUBP', variable) ~ 'SUBP',
+                          grepl('_SV', variable) ~ 'SV',
+                          grepl('_TH', variable) ~ 'TH',
+                          grepl('_PT', variable) ~ 'PT',
+                          grepl('_HP', variable) ~ 'HP',
+                          grepl('_BM', variable) ~ 'BM',
+                          grepl('_PERIO', variable) ~ 'PERIO'))
+
+# drop suffix from variable
+metaphlan_df_melted$variable <- gsub("_.*","", metaphlan_df_melted$variable)
+
+
+# load metadata for matching biosample ID to internal ID
+metaphlan_metadata <- read.csv("/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/Metaphlan/686_bowtie2_metagenomes_metadata.csv", header = TRUE)
+
+# merge metaphlan results with metadata
+metaphlan_df_melted <- merge(metaphlan_df_melted, metaphlan_metadata, by.x = "variable", by.y = "BioSample")
+
+# filter by site = SUPP and focal taxa
+filtered_metaphlan_df_melted <- metaphlan_df_melted %>% 
+  filter(site == "SUPP") %>% 
+  filter(clade_name == "Haemophilus_parainfluenzae" | clade_name == "Aggregatibacter_aphrophilus" | clade_name == "Aggregatibacter_sp_oral_taxon_458") %>% 
+  droplevels()
+
+# pivot wider for recalc rel ab and to remove samples where all three taxa absent
+wide_filtered_metaphlan_df_melted <- pivot_wider(filtered_metaphlan_df_melted, names_from = clade_name, values_from = value)
+
+# remove samples where both species are not present (sum = 0 for both)
+# Create list of samples where both species absent
+metaphlan_ternary_absence_list <- subset(wide_filtered_metaphlan_df_melted, rowSums(wide_filtered_metaphlan_df_melted[, -1:-13]) == 0)
+metaphlan_ternary_absence_list <- metaphlan_ternary_absence_list %>% select(Internal_ID)
+
+# Remove rows in data frame that match rows in absence list
+wide_filtered_metaphlan_df_melted <- wide_filtered_metaphlan_df_melted[!(wide_filtered_metaphlan_df_melted$Internal_ID %in% metaphlan_ternary_absence_list$Internal_ID), ]
+
+# covert from tibble to data frame
+wide_filtered_metaphlan_df_melted <- as.data.frame(wide_filtered_metaphlan_df_melted)
+
+# recalculate relative abundance with respect to the three focal species
+denomoinator <- (wide_filtered_metaphlan_df_melted$Haemophilus_parainfluenzae + wide_filtered_metaphlan_df_melted$Aggregatibacter_aphrophilus + wide_filtered_metaphlan_df_melted$Aggregatibacter_sp_oral_taxon_458)
+
+wide_filtered_metaphlan_df_melted$Haemophilus_parainfluenzae_recalc <- wide_filtered_metaphlan_df_melted$Haemophilus_parainfluenzae/denomoinator
+wide_filtered_metaphlan_df_melted$Haemophilus_parainfluenzae_recalc[is.na(wide_filtered_metaphlan_df_melted$Haemophilus_parainfluenzae_recalc)] <- 0
+
+wide_filtered_metaphlan_df_melted$Aggregatibacter_aphrophilus_recalc <- wide_filtered_metaphlan_df_melted$Aggregatibacter_aphrophilus/denomoinator
+wide_filtered_metaphlan_df_melted$Aggregatibacter_aphrophilus_recalc[is.na(wide_filtered_metaphlan_df_melted$Aggregatibacter_aphrophilus_recalc)] <- 0
+
+wide_filtered_metaphlan_df_melted$Aggregatibacter_sp_oral_taxon_458_recalc <- wide_filtered_metaphlan_df_melted$Aggregatibacter_sp_oral_taxon_458/denomoinator
+wide_filtered_metaphlan_df_melted$Aggregatibacter_sp_oral_taxon_458_recalc[is.na(wide_filtered_metaphlan_df_melted$Aggregatibacter_sp_oral_taxon_458_recalc)] <- 0
+
+
+Final_wide_filtered_metaphlan_df_melted <- wide_filtered_metaphlan_df_melted %>% 
+  mutate(symbol = "circle",
+         opacity = 0.75,
+         fill = "black",
+         stroke = "white",
+         size = QC_total_reads) %>% 
+  dplyr::rename(a = Haemophilus_parainfluenzae_recalc,
+                b = Aggregatibacter_aphrophilus_recalc,
+                c = Aggregatibacter_sp_oral_taxon_458_recalc,
+                title = Internal_ID) %>% 
+  select(a, b, c, size, symbol, opacity, fill, stroke, title)
+
+
+# rescale size for plotting
+Final_wide_filtered_metaphlan_df_melted$size <- rescale(Final_wide_filtered_metaphlan_df_melted$size, to = c(5, 1000))
+
+write.csv(Final_wide_filtered_metaphlan_df_melted, "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Ternary_plots/Metaphlna_SUPP_ternary_plot_df.csv", row.names = FALSE, quote = FALSE)
+
+
+
+Metaphlan_bubble_summary <- Final_wide_filtered_metaphlan_df_melted %>% 
+  summarise(total = n(),
+            a_corner = length(a[a>=0.9]),
+            b_corner = length(b[b>=0.9]),
+            c_corner = length(c[c>=0.9]),
+            total_corner = sum(a_corner, b_corner, c_corner),
+            a_corner_per_total = a_corner/total,
+            b_corner_per_total = b_corner/total,
+            c_corner_per_total = c_corner/total,
+            a_b_edge = sum(ifelse(a>0&a<0.9 & b>0&b<0.9 & c == 0, 1, 0)), 
+            b_c_edge = sum(ifelse(b>0&b<0.9 & c>0&c<0.9 & a == 0, 1, 0)), 
+            a_c_edge = sum(ifelse(a>0&a<0.9 & c>0&c<0.9 & b == 0, 1, 0)),
+            total_edge = sum(a_b_edge, b_c_edge, a_c_edge),
+            a_b_edge_per_total = a_b_edge/total,
+            b_c_edge_per_total = b_c_edge/total,
+            a_c_edge_per_total = a_c_edge/total,
+            interior = (total - total_corner - total_edge),
+            fraction_interior = interior/total
+  ) %>% 
+  select(total,
+         total_corner,
+         a_corner, a_corner_per_total,
+         b_corner, b_corner_per_total,
+         c_corner, c_corner_per_total,
+         total_edge,
+         a_b_edge, a_b_edge_per_total,
+         b_c_edge, b_c_edge_per_total,
+         a_c_edge, a_c_edge_per_total,
+         interior, fraction_interior
+  )
+
+
+write.csv(Metaphlan_bubble_summary, "/Users/home/SPECIES_LEVEL_PANGENOMES/Haemophilus_and_Aggregatibacter/FIGURES/Ternary_plots/Metaphlan_SUPP_ternary_plot_bubble_summary.csv", row.names = FALSE, quote = FALSE)
+
+
+
+
+```
+
+```{r session info}
+sessionInfo()
+```
+
+R version 4.1.2 (2021-11-01)
+Platform: x86_64-apple-darwin17.0 (64-bit)
+Running under: macOS Monterey 12.6
+
+Matrix products: default
+LAPACK: /Library/Frameworks/R.framework/Versions/4.1/Resources/lib/libRlapack.dylib
+
+locale:
+[1] en_US.UTF-8/en_US.UTF-8/en_US.UTF-8/C/en_US.UTF-8/en_US.UTF-8
+
+attached base packages:
+[1] grid      stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+ [1] tibble_3.1.8    textshape_1.7.3 gtable_0.3.1    egg_0.4.5       gridExtra_2.3   janitor_2.1.0   vegan_2.6-4    
+ [8] lattice_0.20-45 permute_0.9-7   scales_1.2.1    reshape2_1.4.4  tidyr_1.2.1     dplyr_1.0.10    ggplot2_3.4.0  
+
+loaded via a namespace (and not attached):
+ [1] nlme_3.1-161            lubridate_1.9.0         numDeriv_2016.8-1.1     tools_4.1.2            
+ [5] backports_1.4.1         utf8_1.2.2              R6_2.5.1                DBI_1.1.3              
+ [9] mgcv_1.8-41             colorspace_2.0-3        withr_2.5.0             tidyselect_1.2.0       
+[13] mnormt_2.1.1            phangorn_2.10.0         emmeans_1.8.3           compiler_4.1.2         
+[17] textshaping_0.3.6       cli_3.5.0               expm_0.999-6            sandwich_3.0-2         
+[21] labeling_0.4.2          mvtnorm_1.1-3           quadprog_1.5-8          systemfonts_1.0.4      
+[25] stringr_1.5.0           digest_0.6.31           rmarkdown_2.19          pkgconfig_2.0.3        
+[29] htmltools_0.5.4         plotrix_3.8-2           fastmap_1.1.0           maps_3.4.1             
+[33] rlang_1.0.6             rstudioapi_0.14         optimParallel_1.0-2     generics_0.1.3         
+[37] farver_2.1.1            zoo_1.8-11              combinat_0.0-8          dendextend_1.16.0      
+[41] car_3.1-1               magrittr_2.0.3          Matrix_1.5-1            Rcpp_1.0.9             
+[45] munsell_0.5.0           fansi_1.0.3             ape_5.6-2               abind_1.4-5            
+[49] viridis_0.6.2           lifecycle_1.0.3         scatterplot3d_0.3-42    stringi_1.7.8          
+[53] multcomp_1.4-20         yaml_2.3.6              snakecase_0.11.0        carData_3.0-5          
+[57] clusterGeneration_1.3.7 MASS_7.3-58.1           plyr_1.8.8              parallel_4.1.2         
+[61] crayon_1.5.2            splines_4.1.2           knitr_1.41              pillar_1.8.1           
+[65] igraph_1.3.5            ggpubr_0.5.0            estimability_1.4.1      ggsignif_0.6.4         
+[69] codetools_0.2-18        fastmatch_1.1-3         glue_1.6.2              evaluate_0.19          
+[73] data.table_1.14.6       vctrs_0.5.1             purrr_1.0.0             assertthat_0.2.1       
+[77] xfun_0.36               xtable_1.8-4            broom_1.0.2             phytools_1.2-0         
+[81] coda_0.19-4             rstatix_0.7.1           ragg_1.2.4              survival_3.4-0         
+[85] viridisLite_0.4.1       cluster_2.1.4           timechange_0.1.1        TH.data_1.1-1          
+[89] ellipsis_0.3.2     
